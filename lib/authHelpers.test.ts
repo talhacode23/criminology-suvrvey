@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mapFirebaseAuthError, validateAuthInput, AUTH_ERROR_MESSAGES } from './authHelpers.js';
+import {
+  mapFirebaseAuthError,
+  validateAuthInput,
+  verifyStaticDashboardPasscode,
+  AUTH_ERROR_MESSAGES,
+} from './authHelpers.js';
 
 test('maps incorrect credential error codes to exact required message', () => {
   const credentialCodes = [
@@ -53,3 +58,11 @@ test('validates sign-in and sign-up inputs before network call', () => {
     error: '',
   });
 });
+
+test('verifyStaticDashboardPasscode accepts valid passcode and rejects invalid ones', async () => {
+  assert.equal(await verifyStaticDashboardPasscode('lahore2026'), true);
+  assert.equal(await verifyStaticDashboardPasscode(' lahore2026 '), true);
+  assert.equal(await verifyStaticDashboardPasscode('wrongpass'), false);
+  assert.equal(await verifyStaticDashboardPasscode(''), false);
+});
+

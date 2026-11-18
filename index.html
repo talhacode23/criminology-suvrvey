@@ -26,13 +26,17 @@
             createUserWithEmailAndPassword,
             signOut
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { mapFirebaseAuthError, validateAuthInput } from "/lib/authHelpers.js";
-        import { createFirestoreService } from "/lib/firestoreService.js";
+        import {
+            mapFirebaseAuthError,
+            validateAuthInput,
+            verifyStaticDashboardPasscode
+        } from "./lib/authHelpers.js";
+        import { createFirestoreService } from "./lib/firestoreService.js";
         import {
             validateNoteInput,
             validateMemberInput,
             formatFirestoreDate
-        } from "/lib/workspaceHelpers.js";
+        } from "./lib/workspaceHelpers.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCcrk4QFNvZhq96D5p5uk0bx8mAoLcqyME",
@@ -44,43 +48,50 @@
             measurementId: "G-2MN4QN875P"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const firestoreService = createFirestoreService(app, auth);
+        try {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            const firestoreService = createFirestoreService(app, auth);
 
-        isAnalyticsSupported()
-            .then((supported) => {
-                if (supported) {
-                    getAnalytics(app);
+            isAnalyticsSupported()
+                .then((supported) => {
+                    if (supported) {
+                        getAnalytics(app);
+                    }
+                })
+                .catch(() => {});
+
+            window.firebaseAuthService = {
+                validateAuthInput,
+                mapFirebaseAuthError,
+                verifyStaticDashboardPasscode,
+                subscribeAuthState(callback) {
+                    return onAuthStateChanged(auth, callback);
+                },
+                async signIn(email, password) {
+                    return signInWithEmailAndPassword(auth, email.trim(), password);
+                },
+                async signUp(email, password) {
+                    return createUserWithEmailAndPassword(auth, email.trim(), password);
+                },
+                async signOut() {
+                    return signOut(auth);
                 }
-            })
-            .catch(() => {});
+            };
 
-        window.firebaseAuthService = {
-            validateAuthInput,
-            mapFirebaseAuthError,
-            subscribeAuthState(callback) {
-                return onAuthStateChanged(auth, callback);
-            },
-            async signIn(email, password) {
-                return signInWithEmailAndPassword(auth, email.trim(), password);
-            },
-            async signUp(email, password) {
-                return createUserWithEmailAndPassword(auth, email.trim(), password);
-            },
-            async signOut() {
-                return signOut(auth);
-            }
-        };
+            window.firestoreService = firestoreService;
+            window.workspaceHelpers = {
+                validateNoteInput,
+                validateMemberInput,
+                formatFirestoreDate
+            };
 
-        window.firestoreService = firestoreService;
-        window.workspaceHelpers = {
-            validateNoteInput,
-            validateMemberInput,
-            formatFirestoreDate
-        };
-
-        window.dispatchEvent(new CustomEvent('firebase-auth-ready'));
+            window.dispatchEvent(new CustomEvent('firebase-auth-ready'));
+        } catch (err) {
+            console.error('Firebase initialization error:', err);
+            window.firebaseInitError = 'Unable to initialize authentication service. Please refresh the page.';
+            window.dispatchEvent(new CustomEvent('firebase-auth-error', { detail: window.firebaseInitError }));
+        }
     </script>
     <script>
         tailwind.config = {
@@ -955,11 +966,30 @@
                         });
                     };
 
+                    if (window.firebaseInitError) {
+                        this.authReady = true;
+                        this.authError = window.firebaseInitError;
+                        return;
+                    }
+
                     if (window.firebaseAuthService) {
                         bindAuthListener();
                     } else {
                         window.addEventListener('firebase-auth-ready', bindAuthListener, { once: true });
+                        window.addEventListener('firebase-auth-error', (e) => {
+                            this.authReady = true;
+                            this.authError = e?.detail || 'Unable to initialize authentication service.';
+                        }, { once: true });
                     }
+
+                    setTimeout(() => {
+                        if (!this.authReady) {
+                            this.authReady = true;
+                            if (!window.firebaseAuthService && !this.authError) {
+                                this.authError = 'Authentication took too long to initialize. Please refresh the page.';
+                            }
+                        }
+                    }, 6000);
                 },
 
                 async startWorkspaceSync(user) {
@@ -1165,13 +1195,37 @@
 
                     this.dashboardUnlockLoading = true;
                     try {
-                        const res = await fetch('/api/verify-dashboard-password', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ password: entered })
-                        });
-                        const data = await res.json();
-                        if (res.ok && data.ok) {
+                        let verified = false;
+                        let serverHandled = false;
+                        let serverError = '';
+                        const isStaticHost = window.location.hostname.endsWith('.github.io');
+
+                        if (!isStaticHost) {
+                            try {
+                                const res = await fetch('./api/verify-dashboard-password', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ password: entered })
+                                });
+                                const contentType = res.headers.get('content-type') || '';
+                                if (contentType.includes('application/json')) {
+                                    const data = await res.json();
+                                    serverHandled = true;
+                                    verified = Boolean(res.ok && data.ok);
+                                    if (!verified) {
+                                        serverError = data?.error || 'Incorrect passcode. Access denied.';
+                                    }
+                                }
+                            } catch {
+                                serverHandled = false;
+                            }
+                        }
+
+                        if (!serverHandled && window.firebaseAuthService?.verifyStaticDashboardPasscode) {
+                            verified = await window.firebaseAuthService.verifyStaticDashboardPasscode(entered);
+                        }
+
+                        if (verified) {
                             this.isDashboardUnlocked = true;
                             sessionStorage.setItem('criminology_dashboard_unlocked', 'true');
                             this.dashboardPasscodeInput = '';
@@ -1181,7 +1235,7 @@
                             }
                             this.showNotify('Dashboard unlocked successfully!');
                         } else {
-                            this.dashboardPasscodeError = data?.error || 'Incorrect passcode. Access denied.';
+                            this.dashboardPasscodeError = serverError || 'Incorrect passcode. Access denied.';
                         }
                     } catch (err) {
                         this.dashboardPasscodeError = 'Unable to verify passcode. Please try again.';
