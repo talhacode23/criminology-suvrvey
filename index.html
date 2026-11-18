@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BS Criminology Research Survey - Drug Abuse & Criminal Behaviour</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Font Awesome CDN for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK Modules -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Configuration (Global setup)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'criminology-research-lahore';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: "AIzaSyDemoPlaceholderOnlyForLocalFallback",
+                authDomain: "criminology-research.firebaseapp.com",
+                projectId: "criminology-research",
+                storageBucket: "criminology-research.appspot.com",
+                messagingSenderId: "1234567890",
+                appId: "1:1234567890:web:abc123def456"
+            };
+
+        window.initFirebaseSystem = async function(appComponent) {
+            try {
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+
+                // Authenticate before querying
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Public collection reference following strict path rules
+                const responsesCollection = collection(db, 'artifacts', appId, 'public', 'data', 'responses');
+
+                // Attach real-time cloud listener
+                onSnapshot(responsesCollection, (snapshot) => {
+                    const cloudData = [];
+                    snapshot.forEach(doc => {
+                        cloudData.push({ id: doc.id, ...doc.data() });
+                    });
+                    // Sort latest first
+                    cloudData.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    appComponent.syncCloudResponses(cloudData);
+                }, (error) => {
+                    console.warn("Firestore realtime sync notice (using local fallback if unconfigured):", error);
+                });
+
+                window.saveSubmissionToCloud = async function(submission) {
+                    try {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'responses', submission.id);
+                        await setDoc(docRef, {
+                            ...submission,
+                            createdAt: Date.now()
+                        });
+                        return true;
+                    } catch (e) {
+                        console.error("Cloud save fallback trigger:", e);
+                        return false;
+                    }
+                };
+            } catch (err) {
+                console.warn("Firebase initialization notice:", err);
+            }
+        };
+    </script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe',
+                            600: '#4f46e5', 700: '#4338ca', 800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body x-cloak class="h-full bg-slate-50" x-data="surveyApp()" x-init="init()">
+    <header class="bg-brand-900 text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="font-bold text-lg md:text-xl">BS Criminology Research Survey</h1>
+                <p class="text-xs text-indigo-200">Drug Abuse &amp; Criminal Behaviour</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <!-- Tabs visible when unlocked by researcher -->
+                <div x-show="isResearcher" class="flex items-center bg-brand-800/80 p-1.5 rounded-xl border border-indigo-700/50 shadow-inner space-x-1">
+                    <button @click="currentTab = 'survey'" 
+                        :class="currentTab === 'survey' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <span>Survey</span>
+                    </button>
+                    <button @click="currentTab = 'admin'" 
+                        :class="currentTab === 'admin' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <span>Dashboard (<span x-text="allResponses.length"></span>)</span>
+                    </button>
+                    <button @click="currentTab = 'about'" 
+                        :class="currentTab === 'about' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
+                        class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <span>About</span>
+                    </button>
+                    <button @click="lockResearcherAccess()" title="Lock Researcher Session" class="text-rose-300 hover:text-rose-100 p-1.5 rounded-lg transition ml-1">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- ==================== TAB 1: SURVEY ==================== -->
+        <div x-show="currentTab === 'survey'" x-transition class="space-y-6">
+            <div class="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100">
+                <template x-if="!surveySubmitted">
+                    <div>
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-xl md:text-2xl font-bold text-slate-900">Research Questionnaire</h2>
+                            <span class="text-xs font-semibold text-brand-700 bg-brand-50 px-3 py-1 rounded-full" x-text="'Step ' + step + ' of 6'"></span>
+                        </div>
+
+                        <div x-show="step === 1" class="space-y-5">
+                            <h3 class="font-bold text-slate-800">Participant Information & Consent</h3>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Name (optional)</label>
+                                <input type="text" x-model="formData.name" class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600" placeholder="Enter name">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">City</label>
+                                <input type="text" x-model="formData.city" class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                            </div>
+                            <label class="flex items-start gap-3 p-4 bg-slate-50 rounded-xl">
+                                <input type="checkbox" x-model="formData.consent" class="mt-1">
+                                <span class="text-sm text-slate-700">I voluntarily consent to participate in this academic research survey.</span>
+                            </label>
+                        </div>
+
+                        <template x-if="step === 2">
+                            <div class="space-y-5">
+                                <h3 class="font-bold text-slate-800">Section A: Demographics</h3>
+                                <div><label class="block text-sm font-medium mb-2">Age</label><select x-model="formData.q1" class="w-full px-4 py-3 border rounded-xl"><option value="">Select age range</option><option>18-20 years</option><option>21-23 years</option><option>24-26 years</option><option>27-29 years</option></select></div>
+                                <div><label class="block text-sm font-medium mb-2">Gender</label><select x-model="formData.q2" class="w-full px-4 py-3 border rounded-xl"><option value="">Select gender</option><option>Male</option><option>Female</option><option>Prefer not to say</option></select></div>
+                                <div><label class="block text-sm font-medium mb-2">Education</label><select x-model="formData.q3" class="w-full px-4 py-3 border rounded-xl"><option value="">Select education</option><option>Matric</option><option>Intermediate</option><option>Bachelor's</option><option>Master's or above</option></select></div>
+                                <div><label class="block text-sm font-medium mb-2">Current status</label><select x-model="formData.q4" class="w-full px-4 py-3 border rounded-xl"><option value="">Select status</option><option>Student</option><option>Employed</option><option>Unemployed</option><option>Other</option></select></div>
+                            </div>
+                        </template>
+
+                        <template x-if="step >= 3 && step <= 6">
+                            <div class="space-y-4">
+                                <h3 class="font-bold text-slate-800" x-text="step === 3 ? 'Section B: Awareness & Exposure' : step === 4 ? 'Section C: Peer & Family' : step === 5 ? 'Section D: Drug Abuse & Crime' : 'Section E: Prevention & Rehabilitation'"></h3>
+                                <template x-for="qNum in (step === 3 ? [5,6,7,8] : step === 4 ? [9,10,11,12] : step === 5 ? [13,14,15,16] : [17,18,19,20])" :key="qNum">
+                                    <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                                        <p class="text-sm font-semibold text-slate-800 mb-3" x-text="'Q' + qNum + '. ' + getQuestionTitle(qNum)"></p>
+                                        <select x-model="formData['q' + qNum]" class="w-full px-4 py-3 border rounded-xl bg-white">
+                                            <option value="">Select response</option>
+                                            <option>Strongly Agree</option><option>Agree</option><option>Neutral</option><option>Disagree</option><option>Strongly Disagree</option>
+                                            <template x-if="qNum === 8 || qNum === 16"><option>Prefer not to say</option></template>
+                                        </select>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <div class="flex justify-between mt-8">
+                            <button type="button" x-show="step > 1" @click="prevStep()" class="px-5 py-2.5 border border-slate-300 rounded-xl text-sm font-semibold">Previous</button>
+                            <button type="button" x-show="step < 6" @click="nextStep()" class="ml-auto px-5 py-2.5 bg-brand-700 hover:bg-brand-800 text-white rounded-xl text-sm font-semibold">Continue</button>
+                            <button type="button" x-show="step === 6" @click="submitSurvey()" class="ml-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold">Submit Survey</button>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="surveySubmitted">
+                    <div class="text-center py-10">
+                        <i class="fa-solid fa-circle-check text-5xl text-emerald-500"></i>
+                        <h2 class="text-2xl font-bold text-slate-900 mt-4">Thank you for participating</h2>
+                        <p class="text-slate-500 mt-2">Your response has been recorded.</p>
+                        <button type="button" @click="resetSurvey()" class="mt-6 px-5 py-2.5 bg-brand-700 text-white rounded-xl font-semibold">Submit Another Response</button>
+                    </div>
+                </template>
+            </div>
+
+            <div x-show="!isResearcher" class="text-center">
+                <button type="button" @click="openPasswordModal()" class="text-xs text-slate-500 hover:text-brand-700 underline">Researcher access</button>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 2: RESEARCHER DASHBOARD & DATABASE ==================== -->
+        <div x-show="currentTab === 'admin'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-8">
+        
+        <!-- Dashboard Top Action Bar -->
+        <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h2 class="text-xl font-bold text-slate-900 flex items-center space-x-2">
+                    <i class="fa-solid fa-database text-brand-600"></i>
+                    <span>Central Research Database & Analytics</span>
+                </h2>
+                <p class="text-xs text-slate-500 mt-1 flex items-center space-x-2">
+                    <span>Total Submissions: <strong class="text-slate-800" x-text="allResponses.length"></strong></span>
+                    <span class="text-slate-300">•</span>
+                    <span class="text-emerald-600 font-medium flex items-center"><i class="fa-solid fa-cloud text-xs mr-1"></i> Live Central Cloud Sync Active</span>
+                </p>
+            </div>
+
+            <!-- View Toggle & Export Actions -->
+            <div class="flex flex-wrap items-center gap-2">
+                <div class="bg-slate-100 p-1 rounded-xl flex items-center space-x-1 border border-slate-200">
+                    <button type="button" @click="adminViewMode = 'table'" :class="adminViewMode === 'table' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center space-x-1">
+                        <i class="fa-solid fa-table-list"></i>
+                        <span>Responses</span>
+                    </button>
+                    <button type="button" @click="adminViewMode = 'analytics'" :class="adminViewMode === 'analytics' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'" class="px-3 py-1.5 rounded-lg text-xs transition flex items-center space-x-1">
+                        <i class="fa-solid fa-chart-column"></i>
+                        <span>Question Averages</span>
+                    </button>
+                </div>
+
+                <button type="button" @click="loadSampleData()" class="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-brand-700 rounded-xl text-xs font-semibold transition border border-indigo-100 flex items-center space-x-1.5">
+                    <i class="fa-solid fa-vial"></i>
+                    <span>Load 5 Samples</span>
+                </button>
+                <button type="button" @click="exportCSV()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-emerald-600/20">
+                    <i class="fa-solid fa-file-csv"></i>
+                    <span>Export CSV</span>
+                </button>
+                <button type="button" @click="exportJSON()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5">
+                    <i class="fa-solid fa-file-code"></i>
+                    <span>Export JSON</span>
+                </button>
+                <button type="button" @click="confirmClearData()" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-semibold transition border border-rose-100">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- VIEW MODE 1: QUESTION AVERAGES & ANALYTICS DASHBOARD -->
+        <div x-show="adminViewMode === 'analytics'" class="space-y-6">
+            <!-- Overview Stats Header -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Total Respondents</span>
+                    <p class="text-3xl font-bold text-slate-900 mt-1" x-text="allResponses.length"></p>
+                    <p class="text-xs text-slate-500 mt-1">Across Lahore study area</p>
+                </div>
+                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Overall Crime-Drug Correlation Mean</span>
+                    <p class="text-3xl font-bold text-brand-600 mt-1" x-text="calculateOverallMean() + ' / 5.0'"></p>
+                    <p class="text-xs text-slate-500 mt-1">Based on Likert items (Q5–Q20)</p>
+                </div>
+                <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Top Age Group</span>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1" x-text="getTopDemographic('q1')"></p>
+                    <p class="text-xs text-slate-500 mt-1">Most participating demographic</p>
+                </div>
+            </div>
+
+            <!-- Comprehensive Question Percentages & Averages Breakdown -->
+            <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 space-y-8">
+                <div class="flex justify-between items-center border-b border-slate-200 pb-4">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900">Statistical Analysis & Percentages per Question</h3>
+                        <p class="text-xs text-slate-500">Distribution of responses for all 20 questionnaire items</p>
+                    </div>
+                </div>
+
+                <!-- Questions Loop -->
+                <div class="space-y-6">
+                    <template x-for="qNum in 20" :key="qNum">
+                        <div class="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-200/80 pb-3">
+                                <div class="pr-2">
+                                    <span class="text-xs font-bold text-brand-600 uppercase" x-text="getQuestionSection(qNum)"></span>
+                                    <h4 class="font-bold text-slate-900 text-sm sm:text-base mt-0.5" x-text="'Q' + qNum + '. ' + getQuestionTitle(qNum)"></h4>
+                                </div>
+                                <!-- Mean Score badge for Likert questions -->
+                                <template x-if="qNum >= 5">
+                                    <div class="bg-brand-50 border border-brand-200 text-brand-800 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap">
+                                        Average Score: <span class="font-bold text-sm text-brand-700" x-text="calculateQuestionMean(qNum)"></span> / 5.0
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Option Breakdown Bars -->
+                            <div class="space-y-2.5">
+                                <template x-for="optData in getQuestionStats(qNum)" :key="optData.label">
+                                    <div class="space-y-1">
+                                        <div class="flex justify-between text-xs font-medium text-slate-700">
+                                            <span x-text="optData.label"></span>
+                                            <span class="text-slate-500"><strong x-text="optData.count"></strong> (<span x-text="optData.percent + '%'"></span>)</span>
+                                        </div>
+                                        <div class="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
+                                            <div class="h-2.5 rounded-full transition-all duration-500" :class="optData.barColor" :style="width: ${optData.percent}%"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW MODE 2: TABLE RESPONSES LIST -->
+        <div x-show="adminViewMode === 'table'" class="space-y-4">
+            <!-- Search Bar -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-4 top-3.5 text-slate-400 text-sm"></i>
+                    <input type="text" x-model="searchQuery" placeholder="Search by Respondent Name, City, Age, or Response ID..." class="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-brand-600">
+                </div>
+            </div>
+
+            <!-- Responses Data Table -->
+            <div class="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-700 text-xs font-bold uppercase tracking-wider border-b border-slate-200">
+                                <th class="py-3.5 px-4">Response ID</th>
+                                <th class="py-3.5 px-4">Date / Time</th>
+                                <th class="py-3.5 px-4">Name</th>
+                                <th class="py-3.5 px-4">City</th>
+                                <th class="py-3.5 px-4">Age</th>
+                                <th class="py-3.5 px-4">Gender</th>
+                                <th class="py-3.5 px-4">Education</th>
+                                <th class="py-3.5 px-4 text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-200 text-xs sm:text-sm text-slate-700">
+                            <!-- Empty State -->
+                            <tr x-show="filteredResponses.length === 0">
+                                <td colspan="8" class="text-center py-12 text-slate-400">
+                                    <i class="fa-solid fa-inbox text-4xl block mb-2 opacity-50"></i>
+                                    <span>No research submissions recorded yet.</span>
+                                </td>
+                            </tr>
+
+                            <!-- Data Rows -->
+                            <template x-for="item in filteredResponses" :key="item.id">
+                                <tr class="hover:bg-slate-50 transition">
+                                    <td class="py-3.5 px-4 font-mono font-semibold text-brand-700" x-text="item.id"></td>
+                                    <td class="py-3.5 px-4 text-slate-500 text-xs" x-text="item.timestamp"></td>
+                                    <td class="py-3.5 px-4 font-semibold text-slate-900" x-text="item.name || 'Anonymous'"></td>
+                                    <td class="py-3.5 px-4 text-slate-600" x-text="item.city || 'Lahore'"></td>
+                                    <td class="py-3.5 px-4 text-slate-600" x-text="item.q1"></td>
+                                    <td class="py-3.5 px-4 text-slate-600" x-text="item.q2"></td>
+                                    <td class="py-3.5 px-4 text-slate-600" x-text="item.q3"></td>
+                                    <td class="py-3.5 px-4 text-center">
+                                        <button type="button" @click="selectedResponse = item; showDetailModal = true;" class="bg-brand-50 hover:bg-brand-100 text-brand-700 px-3 py-1.5 rounded-lg font-semibold transition text-xs flex items-center space-x-1 mx-auto">
+                                            <i class="fa-solid fa-eye"></i>
+                                            <span>View Answers</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== TAB 3: ABOUT STUDY ==================== -->
+    <div x-show="currentTab === 'about'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="max-w-3xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        <h2 class="text-2xl font-bold text-slate-900 mb-4">About This Study</h2>
+        <p class="text-sm text-slate-500 mb-6">This survey is part of a research project conducted by BS Criminology students at the University of Lahore. The study aims to explore the relationship between drug abuse and criminal behaviour among youth in Lahore.</p>
+
+        <h3 class="text-lg font-semibold text-slate-800 mb-3">Objectives</h3>
+        <ul class="list-disc list-inside mb-6">
+            <li class="text-slate-700">To assess the awareness of drug abuse effects among youth.</li>
+            <li class="text-slate-700">To evaluate the correlation between drug abuse and criminal activities.</li>
+            <li class="text-slate-700">To identify the demographic factors associated with drug abuse.</li>
+            <li class="text-slate-700">To recommend preventive measures and interventions.</li>
+        </ul>
+
+        <h3 class="text-lg font-semibold text-slate-800 mb-3">Methodology</h3>
+        <p class="text-slate-700 mb-4">The study will use a mixed-methods approach, including quantitative surveys and qualitative interviews, to collect data from a diverse sample of participants aged 18-29 in Lahore.</p>
+        <p class="text-slate-700 mb-4">Participants will be recruited through online platforms, social media, and community outreach. The survey will be anonymous, and all responses will be kept confidential.</p>
+        <p class="text-slate-700">Data collection is expected to be completed by December 2023, followed by data analysis and report writing.</p>
+
+        <h3 class="text-lg font-semibold text-slate-800 mb-3">Expected Outcomes</h3>
+        <p class="text-slate-700 mb-4">The study aims to provide insights into the patterns and predictors of drug abuse and criminal behaviour among youth in Lahore. It is expected to identify key risk and protective factors, as well as gaps in current prevention and intervention efforts.</p>
+        <p class="text-slate-700">The findings will be disseminated through academic publications, community reports, and presentations to stakeholders, including policymakers, educators, and healthcare providers.</p>
+
+        <h3 class="text-lg font-semibold text-slate-800 mb-3">Contact Information</h3>
+        <p class="text-slate-700 mb-2">For inquiries or further information about the study, please contact:</p>
+        <p class="text-slate-700 font-medium">Dr. Ayesha Khan</p>
+        <p class="text-slate-700">Email: ayesha.khan@uos.edu.pk</p>
+        <p class="text-slate-700">Phone: +92 300 1234567</p>
+    </div>
+
+    <!-- Response Detail Modal -->
+    <div x-show="showDetailModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50" x-transition>
+        <div class="bg-white p-6 rounded-3xl shadow-xl max-w-lg w-full">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-slate-900" x-text="'Response Details - ' + selectedResponse.id"></h3>
+                <button @click="showDetailModal = false" class="text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Response Metadata -->
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs text-slate-500 font-medium mb-1">Response ID</p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.id"></p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs text-slate-500 font-medium mb-1">Date / Time</p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.timestamp"></p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs text-slate-500 font-medium mb-1">Name</p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.name || 'Anonymous'"></p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs text-slate-500 font-medium mb-1">City</p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.city || 'Lahore'"></p>
+                </div>
+            </div>
+
+            <!-- Response Answers -->
+            <div class="mt-6">
+                <h4 class="text-md font-semibold text-slate-800 mb-3">Your Answers</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <template x-for="qNum in 20" :key="qNum">
+                        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                            <p class="text-xs text-slate-500 font-medium mb-1" x-text="'Q' + qNum"></p>
+                            <p class="text-slate-900" x-text="getQuestionTitle(qNum)"></p>
+                            <p class="text-slate-700 font-semibold mt-1" x-text="selectedResponse['q' + qNum]"></p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Close Button -->
+            <div class="mt-6">
+                <button @click="showDetailModal = false" class="w-full px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold transition">
+                    <i class="fa-solid fa-xmark mr-2"></i>
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Researcher Password Modal -->
+    <div x-show="showPasswordModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50" x-transition>
+        <div class="bg-white p-6 rounded-3xl shadow-xl max-w-sm w-full">
+            <h3 class="text-lg font-bold text-slate-900 mb-4">Unlock Researcher Access</h3>
+            <p class="text-sm text-slate-500 mb-6">Enter the secret passcode to access the researcher dashboard.</p>
+
+            <div class="mb-4">
+                <input type="password" x-model="passwordInput" placeholder="Enter passcode"
+                    class="block w-full px-4 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent">
+            </div>
+
+            <div class="flex justify-between gap-4">
+                <button @click="verifyPassword()" class="w-full px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold transition">
+                    <i class="fa-solid fa-check mr-2"></i>
+                    Unlock
+                </button>
+                <button @click="showPasswordModal = false" class="w-full px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-semibold transition">
+                    <i class="fa-solid fa-xmark mr-2"></i>
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Notification Toast -->
+    <div x-show="notification.show" class="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 max-w-xs w-full transition-all duration-300" :class="notification.type === 'success' ? 'ring-2 ring-emerald-500' : 'ring-2 ring-rose-500'">
+        <div class="flex items-center">
+            <div class="flex-shrink-0">
+                <i class="fa-solid" :class="notification.type === 'success' ? 'fa-check-circle text-emerald-600' : 'fa-xmark-circle text-rose-600'"></i>
+            </div>
+            <div class="ml-3">
+                <p class="text-sm font-medium text-slate-900" x-text="notification.message"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase Auth & Firestore Initialization (moved to bottom for faster page load) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Configuration (Global setup)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'criminology-research-lahore';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config) 
+            : {
+                apiKey: "AIzaSyDemoPlaceholderOnlyForLocalFallback",
+                authDomain: "criminology-research.firebaseapp.com",
+                projectId: "criminology-research",
+                storageBucket: "criminology-research.appspot.com",
+                messagingSenderId: "1234567890",
+                appId: "1:1234567890:web:abc123def456"
+            };
+
+        window.initFirebaseSystem = async function(appComponent) {
+            try {
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+
+                // Authenticate before querying
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Public collection reference following strict path rules
+                const responsesCollection = collection(db, 'artifacts', appId, 'public', 'data', 'responses');
+
+                // Attach real-time cloud listener
+                onSnapshot(responsesCollection, (snapshot) => {
+                    const cloudData = [];
+                    snapshot.forEach(doc => {
+                        cloudData.push({ id: doc.id, ...doc.data() });
+                    });
+                    // Sort latest first
+                    cloudData.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                    appComponent.syncCloudResponses(cloudData);
+                }, (error) => {
+                    console.warn("Firestore realtime sync notice (using local fallback if unconfigured):", error);
+                });
+
+                window.saveSubmissionToCloud = async function(submission) {
+                    try {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'responses', submission.id);
+                        await setDoc(docRef, {
+                            ...submission,
+                            createdAt: Date.now()
+                        });
+                        return true;
+                    } catch (e) {
+                        console.error("Cloud save fallback trigger:", e);
+                        return false;
+                    }
+                };
+            } catch (err) {
+                console.warn("Firebase initialization notice:", err);
+            }
+        };
+    </script>
+
+    <!-- Alpine.js Application Logic -->
+    <script>
+        function surveyApp() {
+            return {
+                currentTab: 'survey',
+                adminViewMode: 'analytics', // 'analytics' or 'table'
+                step: 1,
+                surveySubmitted: false,
+                showDetailModal: false,
+                showPasswordModal: false,
+                isResearcher: false,
+                passwordInput: '',
+                secretPasscode: 'lahore2026',
+                selectedResponse: null,
+                searchQuery: '',
+                notification: {
+                    show: false,
+                    message: '',
+                    type: 'success'
+                },
+                formData: {
+                    name: '',
+                    city: 'Lahore',
+                    consent: false,
+                    q1: '', q2: '', q3: '', q4: '',
+                    q5: '', q6: '', q7: '', q8: '',
+                    q9: '', q10: '', q11: '', q12: '',
+                    q13: '', q14: '', q15: '', q16: '',
+                    q17: '', q18: '', q19: '', q20: ''
+                },
+                allResponses: [],
+
+                questionTitles: {
+                    1: 'What is your age?',
+                    2: 'What is your gender?',
+                    3: 'What is your education level?',
+                    4: 'What is your current status?',
+                    5: 'I am aware of the harmful effects of drug abuse on young people.',
+                    6: 'Drug abuse is a growing social concern among youth in Lahore.',
+                    7: 'Young people in Lahore are exposed to illegal drugs through their social environment.',
+                    8: 'I have personally used illegal drugs.',
+                    9: 'Friends can influence young people to start using drugs.',
+                    10: 'Young people may use drugs because they want to fit in with their peer groups.',
+                    11: 'Good communication with family can help prevent drug abuse.',
+                    12: 'Family support and guidance can protect young people from harmful activities.',
+                    13: 'Drug abuse may be associated with theft and robbery among some individuals.',
+                    14: 'Illegal drug selling can expose young people to criminal activities.',
+                    15: 'Drug abuse may be associated with aggressive or violent behaviour in some situations.',
+                    16: 'I have personally engaged in an unlawful activity related to drug use.',
+                    17: 'Drug awareness programmes in schools, colleges, and universities can help prevent drug abuse.',
+                    18: 'Counselling services can help young people avoid or reduce drug-related problems.',
+                    19: 'Family guidance and support are important for preventing drug abuse among youth.',
+                    20: 'Rehabilitation services should be accessible to young people experiencing drug-related problems.'
+                },
+
+                questionSections: {
+                    1: 'Section A: Demographics', 2: 'Section A: Demographics', 3: 'Section A: Demographics', 4: 'Section A: Demographics',
+                    5: 'Section B: Awareness & Exposure', 6: 'Section B: Awareness & Exposure', 7: 'Section B: Awareness & Exposure', 8: 'Section B: Awareness & Exposure',
+                    9: 'Section C: Peer & Family', 10: 'Section C: Peer & Family', 11: 'Section C: Peer & Family', 12: 'Section C: Peer & Family',
+                    13: 'Section D: Drug Abuse & Crime', 14: 'Section D: Drug Abuse & Crime', 15: 'Section D: Drug Abuse & Crime', 16: 'Section D: Drug Abuse & Crime',
+                    17: 'Section E: Prevention & Rehab', 18: 'Section E: Prevention & Rehab', 19: 'Section E: Prevention & Rehab', 20: 'Section E: Prevention & Rehab'
+                },
+
+                init() {
+                    if (sessionStorage.getItem('criminology_researcher_auth') === 'true') {
+                        this.isResearcher = true;
+                    }
+                    const saved = localStorage.getItem('criminology_survey_responses');
+                    if (saved) {
+                        try {
+                            this.allResponses = JSON.parse(saved);
+                        } catch (e) {
+                            this.allResponses = [];
+                        }
+                    }
+                    // Initialize central cloud db listener
+                    if (window.initFirebaseSystem) {
+                        window.initFirebaseSystem(this);
+                    }
+                },
+
+                syncCloudResponses(cloudData) {
+                    if (Array.isArray(cloudData) && cloudData.length > 0) {
+                        this.allResponses = cloudData;
+                        localStorage.setItem('criminology_survey_responses', JSON.stringify(cloudData));
+                    }
+                },
+
+                openPasswordModal() {
+                    this.passwordInput = '';
+                    this.showPasswordModal = true;
+                },
+
+                verifyPassword() {
+                    const entered = (this.passwordInput || '').trim();
+                    if (entered === this.secretPasscode) {
+                        this.isResearcher = true;
+                        sessionStorage.setItem('criminology_researcher_auth', 'true');
+                        this.showPasswordModal = false;
+                        this.passwordInput = '';
+                        this.currentTab = 'admin';
+                        this.showNotify('Researcher session unlocked successfully!');
+                    } else {
+                        this.showNotify('Incorrect passcode. Access denied.', 'error');
+                    }
+                },
+
+                lockResearcherAccess() {
+                    this.isResearcher = false;
+                    sessionStorage.removeItem('criminology_researcher_auth');
+                    this.currentTab = 'survey';
+                    this.showNotify('Researcher session locked.');
+                },
+
+                showNotify(message, type = 'success') {
+                    this.notification.message = message;
+                    this.notification.type = type;
+                    this.notification.show = true;
+                    setTimeout(() => {
+                        this.notification.show = false;
+                    }, 3500);
+                },
+
+                nextStep() {
+                    if (this.step === 1 && !this.formData.consent) {
+                        this.showNotify('Please check the consent box to proceed.', 'error');
+                        return;
+                    }
+                    if (this.step < 6) {
+                        this.step++;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                },
+
+                prevStep() {
+                    if (this.step > 1) {
+                        this.step--;
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                },
+
+                async submitSurvey() {
+                    const newSubmission = {
+                        id: 'RESP-' + Date.now().toString().slice(-6),
+                        timestamp: new Date().toLocaleString(),
+                        ...this.formData
+                    };
+
+                    // Local state update
+                    this.allResponses.unshift(newSubmission);
+                    localStorage.setItem('criminology_survey_responses', JSON.stringify(this.allResponses));
+
+                    // Save to Central Cloud Database
+                    if (window.saveSubmissionToCloud) {
+                        await window.saveSubmissionToCloud(newSubmission);
+                    }
+
+                    this.surveySubmitted = true;
+                    this.currentTab = 'survey';
+                    this.showNotify('Survey submitted successfully and saved to central database!');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+
+                getQuestionTitle(qNum) {
+                    return this.questionTitles[qNum] || '';
+                },
+
+                getQuestionSection(qNum) {
+                    return this.questionSections[qNum] || '';
+                },
+
+                getQuestionStats(qNum) {
+                    const total = this.allResponses.length;
+                    let options = [];
+                    
+                    if (qNum === 1) options = ['18-20 years', '21-23 years', '24-26 years', '27-29 years'];
+                    else if (qNum === 2) options = ['Male', 'Female', 'Prefer not to say'];
+                    else if (qNum === 3) options = ['Matric', 'Intermediate', "Bachelor's", "Master's or above"];
+                    else if (qNum === 4) options = ['Student', 'Employed', 'Unemployed', 'Other'];
+                    else if (qNum === 8 || qNum === 16) options = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree', 'Prefer not to say'];
+                    else options = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree'];
+
+                    const colorMap = {
+                        'Strongly Agree': 'bg-emerald-500',
+                        'Agree': 'bg-emerald-400',
+                        'Neutral': 'bg-amber-400',
+                        'Disagree': 'bg-rose-400',
+                        'Strongly Disagree': 'bg-rose-600',
+                        'Prefer not to say': 'bg-slate-400',
+                        'Male': 'bg-indigo-500',
+                        'Female': 'bg-purple-500',
+                        'Student': 'bg-blue-500',
+                        'Employed': 'bg-emerald-500',
+                        'Unemployed': 'bg-amber-500',
+                        'Other': 'bg-slate-500'
+                    };
+
+                    return options.map(opt => {
+                        const count = this.allResponses.filter(r => r['q' + qNum] === opt).length;
+                        const percent = total > 0 ? ((count / total) * 100).toFixed(1) : 0;
+                        return {
+                            label: opt,
+                            count: count,
+                            percent: percent,
+                            barColor: colorMap[opt] || 'bg-brand-500'
+                        };
+                    });
+                },
+
+                calculateQuestionMean(qNum) {
+                    if (this.allResponses.length === 0) return '0.0';
+                    const scoreMap = {
+                        'Strongly Agree': 5,
+                        'Agree': 4,
+                        'Neutral': 3,
+                        'Disagree': 2,
+                        'Strongly Disagree': 1
+                    };
+
+                    let totalScore = 0;
+                    let validCount = 0;
+
+                    this.allResponses.forEach(r => {
+                        const val = r['q' + qNum];
+                        if (scoreMap[val]) {
+                            totalScore += scoreMap[val];
+                            validCount++;
+                        }
+                    });
+
+                    return validCount > 0 ? (totalScore / validCount).toFixed(2) : '0.0';
+                },
+
+                calculateOverallMean() {
+                    if (this.allResponses.length === 0) return '0.0';
+                    let totalSum = 0;
+                    let count = 0;
+                    for (let q = 5; q <= 20; q++) {
+                        const mean = parseFloat(this.calculateQuestionMean(q));
+                        if (mean > 0) {
+                            totalSum += mean;
+                            count++;
+                        }
+                    }
+                    return count > 0 ? (totalSum / count).toFixed(2) : '0.0';
+                },
+
+                getTopDemographic(fieldKey) {
+                    if (this.allResponses.length === 0) return 'N/A';
+                    const counts = {};
+                    this.allResponses.forEach(r => {
+                        const val = r[fieldKey];
+                        if (val) counts[val] = (counts[val] || 0) + 1;
+                    });
+                    let top = 'N/A';
+                    let max = 0;
+                    for (let key in counts) {
+                        if (counts[key] > max) {
+                            max = counts[key];
+                            top = key;
+                        }
+                    }
+                    return top;
+                },
+
+                resetSurvey() {
+                    this.surveySubmitted = false;
+                    this.step = 1;
+                    this.formData = {
+                        name: '',
+                        city: 'Lahore',
+                        consent: false,
+                        q1: '', q2: '', q3: '', q4: '',
+                        q5: '', q6: '', q7: '', q8: '',
+                        q9: '', q10: '', q11: '', q12: '',
+                        q13: '', q14: '', q15: '', q16: '',
+                        q17: '', q18: '', q19: '', q20: ''
+                    };
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                },
+
+                get filteredResponses() {
+                    if (!this.searchQuery) return this.allResponses;
+                    const q = this.searchQuery.toLowerCase();
+                    return this.allResponses.filter(r => 
+                        (r.id && r.id.toLowerCase().includes(q)) ||
+                        (r.name && r.name.toLowerCase().includes(q)) ||
+                        (r.city && r.city.toLowerCase().includes(q)) ||
+                        (r.q1 && r.q1.toLowerCase().includes(q)) ||
+                        (r.q2 && r.q2.toLowerCase().includes(q)) ||
+                        (r.q3 && r.q3.toLowerCase().includes(q)) ||
+                        (r.q4 && r.q4.toLowerCase().includes(q)) ||
+                        (r.timestamp && r.timestamp.toLowerCase().includes(q))
+                    );
+                },
+
+                loadSampleData() {
+                    const sampleNames = ['Ali Raza', 'Usman Khan', 'Fatima Zahra', 'Hamza Tariq', 'Zainab Bibi'];
+                    const sampleCities = ['Lahore', 'Lahore', 'Lahore (Model Town)', 'Lahore (Gulberg)', 'Lahore'];
+                    const sampleAges = ['18-20 years', '21-23 years', '24-26 years', '27-29 years'];
+                    const sampleGenders = ['Male', 'Female'];
+                    const sampleEdu = ['Matric', 'Intermediate', 'Bachelor\'s', 'Master\'s or above'];
+                    const sampleStatus = ['Student', 'Employed', 'Unemployed'];
+                    const likert = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree'];
+
+                    const sampleList = [];
+                    for (let i = 1; i <= 5; i++) {
+                        const item = {
+                            id: 'SAMPLE-' + (1000 + i),
+                            timestamp: new Date(Date.now() - i * 3600000 * 4).toLocaleString(),
+                            name: sampleNames[i - 1],
+                            city: sampleCities[i - 1],
+                            consent: true,
+                            q1: sampleAges[Math.floor(Math.random() * sampleAges.length)],
+                            q2: sampleGenders[Math.floor(Math.random() * sampleGenders.length)],
+                            q3: sampleEdu[Math.floor(Math.random() * sampleEdu.length)],
+                            q4: sampleStatus[Math.floor(Math.random() * sampleStatus.length)],
+                        };
+                        for (let qNum = 5; qNum <= 20; qNum++) {
+                            item['q' + qNum] = likert[Math.floor(Math.random() * likert.length)];
+                        }
+                        sampleList.push(item);
+                    }
+
+                    this.allResponses = [...sampleList, ...this.allResponses];
+                    localStorage.setItem('criminology_survey_responses', JSON.stringify(this.allResponses));
+                    this.showNotify('Loaded 5 sample research responses successfully!');
+                },
+
+                exportCSV() {
+                    if (this.allResponses.length === 0) {
+                        this.showNotify('No responses available to export.', 'error');
+                        return;
+                    }
+
+                    const headers = ['ID', 'Timestamp', 'Name', 'City', 'Age', 'Gender', 'Education', 'Status', 
+                        'Q5', 'Q6', 'Q7', 'Q8', 'Q9', 'Q10', 'Q11', 'Q12', 
+                        'Q13', 'Q14', 'Q15', 'Q16', 'Q17', 'Q18', 'Q19', 'Q20'];
+
+                    let csvContent = headers.join(',') + '\n';
+
+                    this.allResponses.forEach(r => {
+                        const row = [
+                            r.id,
+                            "${r.timestamp}",
+                            "${r.name || 'Anonymous'}",
+                            "${r.city || 'Lahore'}",
+                            "${r.q1 || ''}",
+                            "${r.q2 || ''}",
+                            "${r.q3 || ''}",
+                            "${r.q4 || ''}",
+                            "${r.q5 || ''}",
+                            "${r.q6 || ''}",
+                            "${r.q7 || ''}",
+                            "${r.q8 || ''}",
+                            "${r.q9 || ''}",
+                            "${r.q10 || ''}",
+                            "${r.q11 || ''}",
+                            "${r.q11 || ''}",
+                            "${r.q12 || ''}",
+                            "${r.q13 || ''}",
+                            "${r.q14 || ''}",
+                            "${r.q15 || ''}",
+                            "${r.q16 || ''}",
+                            "${r.q17 || ''}",
+                            "${r.q18 || ''}",
+                            "${r.q19 || ''}",
+                            "${r.q20 || ''}",
+                        ];
+                        csvContent += row.join(',') + '\n';
+                    });
+
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.setAttribute('href', url);
+                    link.setAttribute('download', 'criminology_research_responses_' + Date.now() + '.csv');
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    this.showNotify('CSV dataset exported successfully!');
+                },
+
+                exportJSON() {
+                    if (this.allResponses.length === 0) {
+                        this.showNotify('No responses available to export.', 'error');
+                        return;
+                    }
+
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.allResponses, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", "criminology_research_responses_" + Date.now() + ".json");
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                    this.showNotify('JSON dataset exported successfully!');
+                },
+
+                confirmClearData() {
+                    if (confirm('Are you sure you want to clear all recorded research responses? This action cannot be undone.')) {
+                        this.allResponses = [];
+                        localStorage.removeItem('criminology_survey_responses');
+                        this.showNotify('All research data reset successfully.');
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
