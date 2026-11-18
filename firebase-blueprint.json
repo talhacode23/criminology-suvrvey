@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile metadata stored under users/{uid}.",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Display name for the authenticated user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "description": "Email address of the authenticated user."
+        },
+        "plan": {
+          "type": "string",
+          "enum": ["Free", "Pro", "Team"],
+          "description": "Current workspace plan tier."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was created."
+        }
+      },
+      "required": ["displayName", "email", "plan", "createdAt"]
+    },
+    "Folder": {
+      "title": "Folder",
+      "description": "User-owned folder for organizing file metadata.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Folder display name."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the folder was created."
+        }
+      },
+      "required": ["name", "createdAt"]
+    },
+    "FileItem": {
+      "title": "FileItem",
+      "description": "Metadata-only file entry owned by the user.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "File name including extension."
+        },
+        "folderId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional parent folder document ID."
+        },
+        "size": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Human-readable file size metadata (e.g., 2.4 MB)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the file metadata was created."
+        }
+      },
+      "required": ["name", "size", "createdAt"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "Personal workspace note owned by the user.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Note title."
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 10000,
+          "description": "Optional note body text."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the note was created."
+        }
+      },
+      "required": ["title", "createdAt"]
+    },
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Team member directory entry owned by the user.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Team member full name."
+        },
+        "role": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional role or title."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the team member was added."
+        }
+      },
+      "required": ["name", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile document isolated per authenticated UID."
+    },
+    "/users/{uid}/folders/{folderId}": {
+      "schema": { "$ref": "#/entities/Folder" },
+      "description": "Folders belonging exclusively to the authenticated user."
+    },
+    "/users/{uid}/files/{fileId}": {
+      "schema": { "$ref": "#/entities/FileItem" },
+      "description": "File metadata entries belonging exclusively to the authenticated user."
+    },
+    "/users/{uid}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/Note" },
+      "description": "Notes belonging exclusively to the authenticated user."
+    },
+    "/users/{uid}/teamMembers/{memberId}": {
+      "schema": { "$ref": "#/entities/TeamMember" },
+      "description": "Team members belonging exclusively to the authenticated user."
+    }
+  }
+}

@@ -1,0 +1,152 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity validation blueprints
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['displayName', 'email', 'plan', 'createdAt'])
+        && data.keys().hasOnly(['displayName', 'email', 'plan', 'createdAt'])
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && (request.auth.token.email == null || data.email == request.auth.token.email)
+        && data.plan in ['Free', 'Pro', 'Team']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFolder(data) {
+      return data.keys().hasAll(['name', 'createdAt'])
+        && data.keys().hasOnly(['name', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFile(data, uid) {
+      return data.keys().hasAll(['name', 'size', 'createdAt'])
+        && data.keys().hasOnly(['name', 'folderId', 'size', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && data.size is string && data.size.size() >= 1 && data.size.size() <= 40
+        && (!('folderId' in data) || (
+          isValidId(data.folderId)
+          && exists(/databases/$(database)/documents/users/$(uid)/folders/$(data.folderId))
+        ))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidNote(data) {
+      return data.keys().hasAll(['title', 'createdAt'])
+        && data.keys().hasOnly(['title', 'content', 'createdAt'])
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && (!('content' in data) || (data.content is string && data.content.size() <= 10000))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTeamMember(data) {
+      return data.keys().hasAll(['name', 'createdAt'])
+        && data.keys().hasOnly(['name', 'role', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && (!('role' in data) || (data.role is string && data.role.size() <= 120))
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{uid} {
+      allow get: if isOwner(uid) && isValidId(uid);
+      allow list: if false;
+      allow create: if isOwner(uid)
+        && isValidId(uid)
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isOwner(uid)
+        && isValidId(uid)
+        && isValidUserProfile(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'plan'])
+        && incoming().createdAt == existing().createdAt
+        && incoming().email == existing().email;
+      allow delete: if false;
+
+      match /folders/{folderId} {
+        allow get: if isOwner(uid) && isValidId(folderId);
+        allow list: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && isValidId(folderId)
+          && isValidFolder(incoming())
+          && incoming().createdAt == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(folderId)
+          && isValidFolder(incoming())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name'])
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(uid) && isValidId(folderId);
+      }
+
+      match /files/{fileId} {
+        allow get: if isOwner(uid) && isValidId(fileId);
+        allow list: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && isValidId(fileId)
+          && isValidFile(incoming(), uid)
+          && incoming().createdAt == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(fileId)
+          && isValidFile(incoming(), uid)
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'folderId', 'size'])
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(uid) && isValidId(fileId);
+      }
+
+      match /notes/{noteId} {
+        allow get: if isOwner(uid) && isValidId(noteId);
+        allow list: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && isValidId(noteId)
+          && isValidNote(incoming())
+          && incoming().createdAt == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(noteId)
+          && isValidNote(incoming())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content'])
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(uid) && isValidId(noteId);
+      }
+
+      match /teamMembers/{memberId} {
+        allow get: if isOwner(uid) && isValidId(memberId);
+        allow list: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && isValidId(memberId)
+          && isValidTeamMember(incoming())
+          && incoming().createdAt == request.time;
+        allow update: if isOwner(uid)
+          && isValidId(memberId)
+          && isValidTeamMember(incoming())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role'])
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(uid) && isValidId(memberId);
+      }
+    }
+  }
+}

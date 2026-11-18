@@ -15,71 +15,72 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- Firebase SDK Modules -->
+    <!-- Firebase SDK Modules (Authentication & Analytics only) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAnalytics, isSupported as isAnalyticsSupported } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
+        import {
+            getAuth,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            signOut
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { mapFirebaseAuthError, validateAuthInput } from "/lib/authHelpers.js";
+        import { createFirestoreService } from "/lib/firestoreService.js";
+        import {
+            validateNoteInput,
+            validateMemberInput,
+            formatFirestoreDate
+        } from "/lib/workspaceHelpers.js";
 
-        // Firebase Configuration (Global setup)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'criminology-research-lahore';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : {
-                apiKey: "AIzaSyDemoPlaceholderOnlyForLocalFallback",
-                authDomain: "criminology-research.firebaseapp.com",
-                projectId: "criminology-research",
-                storageBucket: "criminology-research.appspot.com",
-                messagingSenderId: "1234567890",
-                appId: "1:1234567890:web:abc123def456"
-            };
+        const firebaseConfig = {
+            apiKey: "AIzaSyCcrk4QFNvZhq96D5p5uk0bx8mAoLcqyME",
+            authDomain: "criminology-survey.firebaseapp.com",
+            projectId: "criminology-survey",
+            storageBucket: "criminology-survey.firebasestorage.app",
+            messagingSenderId: "957276884882",
+            appId: "1:957276884882:web:312576a400db7488473b4b",
+            measurementId: "G-2MN4QN875P"
+        };
 
-        window.initFirebaseSystem = async function(appComponent) {
-            try {
-                const app = initializeApp(firebaseConfig);
-                const auth = getAuth(app);
-                const db = getFirestore(app);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const firestoreService = createFirestoreService(app, auth);
 
-                // Authenticate before querying
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
+        isAnalyticsSupported()
+            .then((supported) => {
+                if (supported) {
+                    getAnalytics(app);
                 }
+            })
+            .catch(() => {});
 
-                // Public collection reference following strict path rules
-                const responsesCollection = collection(db, 'artifacts', appId, 'public', 'data', 'responses');
-
-                // Attach real-time cloud listener
-                onSnapshot(responsesCollection, (snapshot) => {
-                    const cloudData = [];
-                    snapshot.forEach(doc => {
-                        cloudData.push({ id: doc.id, ...doc.data() });
-                    });
-                    // Sort latest first
-                    cloudData.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                    appComponent.syncCloudResponses(cloudData);
-                }, (error) => {
-                    console.warn("Firestore realtime sync notice (using local fallback if unconfigured):", error);
-                });
-
-                window.saveSubmissionToCloud = async function(submission) {
-                    try {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'responses', submission.id);
-                        await setDoc(docRef, {
-                            ...submission,
-                            createdAt: Date.now()
-                        });
-                        return true;
-                    } catch (e) {
-                        console.error("Cloud save fallback trigger:", e);
-                        return false;
-                    }
-                };
-            } catch (err) {
-                console.warn("Firebase initialization notice:", err);
+        window.firebaseAuthService = {
+            validateAuthInput,
+            mapFirebaseAuthError,
+            subscribeAuthState(callback) {
+                return onAuthStateChanged(auth, callback);
+            },
+            async signIn(email, password) {
+                return signInWithEmailAndPassword(auth, email.trim(), password);
+            },
+            async signUp(email, password) {
+                return createUserWithEmailAndPassword(auth, email.trim(), password);
+            },
+            async signOut() {
+                return signOut(auth);
             }
         };
+
+        window.firestoreService = firestoreService;
+        window.workspaceHelpers = {
+            validateNoteInput,
+            validateMemberInput,
+            formatFirestoreDate
+        };
+
+        window.dispatchEvent(new CustomEvent('firebase-auth-ready'));
     </script>
     <script>
         tailwind.config = {
@@ -104,34 +105,36 @@
 </head>
 <body x-cloak class="h-full bg-slate-50" x-data="surveyApp()" x-init="init()">
     <header class="bg-brand-900 text-white shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
                 <h1 class="font-bold text-lg md:text-xl">BS Criminology Research Survey</h1>
                 <p class="text-xs text-indigo-200">Drug Abuse &amp; Criminal Behaviour</p>
             </div>
-            <div class="flex items-center space-x-2">
-                <!-- Tabs visible when unlocked by researcher -->
-                <div x-show="isResearcher" class="flex items-center bg-brand-800/80 p-1.5 rounded-xl border border-indigo-700/50 shadow-inner space-x-1">
-                    <button @click="currentTab = 'survey'" 
+            <div class="w-full sm:w-auto flex items-center">
+                <!-- Tabs & Logout visible when authenticated -->
+                <div x-show="isAuthenticated" class="w-full sm:w-auto flex flex-wrap items-center justify-between sm:justify-start bg-brand-800/80 p-1.5 rounded-xl border border-indigo-700/50 shadow-inner gap-1">
+                    <button type="button" @click="currentTab = 'survey'" 
                         :class="currentTab === 'survey' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
                         class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
                         <i class="fa-solid fa-pen-to-square"></i>
                         <span>Survey</span>
                     </button>
-                    <button @click="currentTab = 'admin'" 
+                    <button type="button" @click="currentTab = 'admin'" 
                         :class="currentTab === 'admin' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
                         class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
-                        <i class="fa-solid fa-chart-pie"></i>
-                        <span>Dashboard (<span x-text="allResponses.length"></span>)</span>
+                        <i class="fa-solid" :class="isDashboardUnlocked ? 'fa-chart-pie' : 'fa-lock'"></i>
+                        <span x-show="isDashboardUnlocked">Dashboard (<span x-text="allResponses.length"></span>)</span>
+                        <span x-show="!isDashboardUnlocked">Dashboard</span>
                     </button>
-                    <button @click="currentTab = 'about'" 
+                    <button type="button" @click="currentTab = 'about'" 
                         :class="currentTab === 'about' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
                         class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
                         <i class="fa-solid fa-circle-info"></i>
                         <span>About</span>
                     </button>
-                    <button @click="lockResearcherAccess()" title="Lock Researcher Session" class="text-rose-300 hover:text-rose-100 p-1.5 rounded-lg transition ml-1">
+                    <button type="button" @click="logout()" aria-label="Logout" title="Logout" class="px-3 py-1.5 rounded-lg text-xs md:text-sm text-rose-200 hover:text-white hover:bg-rose-600/30 transition flex items-center space-x-1.5 ml-1">
                         <i class="fa-solid fa-right-from-bracket"></i>
+                        <span>Logout</span>
                     </button>
                 </div>
             </div>
@@ -139,8 +142,64 @@
     </header>
 
     <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- ==================== AUTH SCREEN ==================== -->
+        <div x-show="!isAuthenticated" x-transition class="max-w-md mx-auto py-8">
+            <div x-show="!authReady" class="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center">
+                <i class="fa-solid fa-spinner fa-spin text-2xl text-brand-600 mb-3"></i>
+                <p class="text-sm text-slate-600">Checking authentication status...</p>
+            </div>
+
+            <div x-show="authReady" class="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100 space-y-6">
+                <div class="text-center space-y-1">
+                    <h2 class="text-xl md:text-2xl font-bold text-slate-900" x-text="authMode === 'signin' ? 'Sign In' : 'Sign Up'"></h2>
+                    <p class="text-sm text-slate-500" x-text="authMode === 'signin' ? 'Sign in with your email and password to access the dashboard.' : 'Create an account with your email and password.'"></p>
+                </div>
+
+                <!-- Mode Switcher -->
+                <div class="bg-slate-100 p-1 rounded-xl grid grid-cols-2 gap-1 border border-slate-200">
+                    <button type="button" @click="switchAuthMode('signin')"
+                        :class="authMode === 'signin' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'"
+                        class="py-2 rounded-lg text-sm transition">
+                        Sign In
+                    </button>
+                    <button type="button" @click="switchAuthMode('signup')"
+                        :class="authMode === 'signup' ? 'bg-white text-slate-900 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'"
+                        class="py-2 rounded-lg text-sm transition">
+                        Sign Up
+                    </button>
+                </div>
+
+                <form @submit.prevent="submitAuth()" class="space-y-4" novalidate>
+                    <div>
+                        <label for="auth-email" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                        <input id="auth-email" type="email" autocomplete="email" x-model="authForm.email"
+                            placeholder="researcher@example.com"
+                            class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                    </div>
+
+                    <div>
+                        <label for="auth-password" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                        <input id="auth-password" type="password" :autocomplete="authMode === 'signin' ? 'current-password' : 'new-password'" x-model="authForm.password"
+                            placeholder="Enter password"
+                            class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                    </div>
+
+                    <div x-show="authError" role="alert" class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-start space-x-2">
+                        <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+                        <span x-text="authError"></span>
+                    </div>
+
+                    <button type="submit" :disabled="authLoading"
+                        class="w-full py-3 px-4 bg-brand-700 hover:bg-brand-800 disabled:opacity-60 text-white rounded-xl font-semibold text-sm transition flex items-center justify-center space-x-2">
+                        <i x-show="authLoading" class="fa-solid fa-spinner fa-spin"></i>
+                        <span x-text="authLoading ? (authMode === 'signin' ? 'Signing in...' : 'Signing up...') : (authMode === 'signin' ? 'Sign In' : 'Sign Up')"></span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <!-- ==================== TAB 1: SURVEY ==================== -->
-        <div x-show="currentTab === 'survey'" x-transition class="space-y-6">
+        <div x-show="isAuthenticated && currentTab === 'survey'" x-transition class="space-y-6">
             <div class="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100">
                 <template x-if="!surveySubmitted">
                     <div>
@@ -209,13 +268,210 @@
                 </template>
             </div>
 
-            <div x-show="!isResearcher" class="text-center">
-                <button type="button" @click="openPasswordModal()" class="text-xs text-slate-500 hover:text-brand-700 underline">Researcher access</button>
-            </div>
         </div>
 
         <!-- ==================== TAB 2: RESEARCHER DASHBOARD & DATABASE ==================== -->
-        <div x-show="currentTab === 'admin'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-8">
+        <div x-show="isAuthenticated && currentTab === 'admin'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="space-y-8">
+
+        <!-- Dashboard Passcode Lock Screen -->
+        <template x-if="!isDashboardUnlocked">
+            <div class="max-w-md mx-auto py-8">
+                <div class="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100 space-y-6">
+                    <div class="text-center space-y-2">
+                        <div class="w-12 h-12 rounded-2xl bg-brand-50 text-brand-700 flex items-center justify-center mx-auto">
+                            <i class="fa-solid fa-lock text-xl"></i>
+                        </div>
+                        <h2 class="text-xl md:text-2xl font-bold text-slate-900">Dashboard Access Restricted</h2>
+                        <p class="text-sm text-slate-500">Enter the researcher passcode to view survey responses and workspace data.</p>
+                    </div>
+
+                    <form @submit.prevent="unlockDashboard()" class="space-y-4" novalidate>
+                        <div>
+                            <label for="dashboard-passcode-input" class="block text-sm font-medium text-slate-700 mb-1">Dashboard Passcode</label>
+                            <input id="dashboard-passcode-input" type="password" x-model="dashboardPasscodeInput"
+                                placeholder="Enter dashboard passcode"
+                                class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                        </div>
+
+                        <div x-show="dashboardPasscodeError" role="alert" class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm flex items-start space-x-2">
+                            <i class="fa-solid fa-circle-exclamation mt-0.5"></i>
+                            <span x-text="dashboardPasscodeError"></span>
+                        </div>
+
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <button type="submit" :disabled="dashboardUnlockLoading"
+                                class="flex-1 py-3 px-4 bg-brand-700 hover:bg-brand-800 disabled:opacity-60 text-white rounded-xl font-semibold text-sm transition flex items-center justify-center space-x-2">
+                                <i x-show="dashboardUnlockLoading" class="fa-solid fa-spinner fa-spin"></i>
+                                <span x-text="dashboardUnlockLoading ? 'Verifying...' : 'Unlock Dashboard'"></span>
+                            </button>
+                            <button type="button" @click="currentTab = 'survey'"
+                                class="py-3 px-4 border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl font-semibold text-sm transition">
+                                Go to Survey
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </template>
+
+        <template x-if="isDashboardUnlocked">
+        <div class="space-y-8">
+        <!-- Workspace Overview Bar -->
+        <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 space-y-5">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <h2 class="text-xl font-bold text-slate-900">Workspace Overview</h2>
+                        <span class="px-2.5 py-0.5 rounded-lg bg-brand-50 text-brand-700 border border-brand-200 text-xs font-semibold" x-text="(userProfile?.plan || 'Free') + ' Plan'"></span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">
+                        Signed in as <strong class="text-slate-700" x-text="userProfile?.email || authUserEmail || 'Researcher'"></strong>
+                    </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" @click="openNoteModal()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-emerald-600/20">
+                        <i class="fa-solid fa-note-sticky"></i>
+                        <span>New Note</span>
+                    </button>
+                    <button type="button" @click="openMemberModal()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5">
+                        <i class="fa-solid fa-user-plus"></i>
+                        <span>Add Member</span>
+                    </button>
+                    <button type="button" @click="lockDashboard()" class="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-semibold transition border border-rose-200 flex items-center space-x-1.5">
+                        <i class="fa-solid fa-lock"></i>
+                        <span>Lock Dashboard</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Workspace Error Alert -->
+            <div x-show="workspaceError" role="alert" class="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs sm:text-sm flex items-start space-x-2">
+                <i class="fa-solid fa-triangle-exclamation mt-0.5"></i>
+                <span x-text="workspaceError"></span>
+            </div>
+
+            <!-- Live Workspace Counts -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">My Notes</span>
+                    <p class="text-2xl font-bold text-brand-600 mt-1" x-text="notes.length"></p>
+                    <p class="text-xs text-slate-500 mt-0.5">Saved personal notes</p>
+                </div>
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span class="text-xs text-slate-400 font-semibold uppercase">Team Members</span>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1" x-text="teamMembers.length"></p>
+                    <p class="text-xs text-slate-500 mt-0.5">Active collaborators</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== SECTION 2 & 3: MY NOTES & TEAM MEMBERS ==================== -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- SECTION 2: MY NOTES -->
+            <section aria-labelledby="my-notes-heading" class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 space-y-5 flex flex-col">
+                <div class="flex justify-between items-center gap-3 border-b border-slate-200 pb-4">
+                    <div>
+                        <h3 id="my-notes-heading" class="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                            <i class="fa-solid fa-note-sticky text-emerald-600"></i>
+                            <span>My Notes</span>
+                            <span class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full" x-text="notes.length"></span>
+                        </h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Private field notes and research observations.</p>
+                    </div>
+                    <button type="button" @click="openNoteModal()" class="px-3.5 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-brand-700/20">
+                        <i class="fa-solid fa-plus"></i>
+                        <span>New Note</span>
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div x-show="workspaceLoading" class="py-10 text-center text-slate-500">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl text-brand-600 mb-2"></i>
+                    <p class="text-sm">Loading notes...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="!workspaceLoading && notes.length === 0" class="py-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <i class="fa-solid fa-note-sticky text-3xl text-slate-300 mb-2"></i>
+                    <p class="text-sm font-semibold text-slate-700">No notes yet</p>
+                    <p class="text-xs text-slate-500 mt-1">Click "New Note" to save your first research note.</p>
+                </div>
+
+                <!-- Notes Cards -->
+                <div x-show="!workspaceLoading && notes.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <template x-for="note in notes" :key="note.id">
+                        <article class="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col justify-between space-y-3">
+                            <div>
+                                <div class="flex items-start justify-between gap-2">
+                                    <h4 class="text-sm font-bold text-slate-900 break-words" x-text="note.title"></h4>
+                                    <button type="button" @click="deleteNoteItem(note.id)" :aria-label="'Delete note ' + note.title"
+                                        class="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition flex-shrink-0">
+                                        <i class="fa-solid fa-trash-can text-xs"></i>
+                                    </button>
+                                </div>
+                                <p x-show="note.content" class="text-xs text-slate-600 mt-2 whitespace-pre-line break-words" x-text="note.content"></p>
+                            </div>
+                            <p class="text-[11px] text-slate-400 font-medium" x-text="formatDate(note.createdAt)"></p>
+                        </article>
+                    </template>
+                </div>
+            </section>
+
+            <!-- SECTION 3: TEAM MEMBERS -->
+            <section aria-labelledby="team-members-heading" class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 space-y-5 flex flex-col">
+                <div class="flex justify-between items-center gap-3 border-b border-slate-200 pb-4">
+                    <div>
+                        <h3 id="team-members-heading" class="text-lg font-bold text-slate-900 flex items-center space-x-2">
+                            <i class="fa-solid fa-users text-brand-600"></i>
+                            <span>Team Members</span>
+                            <span class="text-xs font-semibold text-brand-700 bg-brand-50 px-2.5 py-0.5 rounded-full" x-text="teamMembers.length"></span>
+                        </h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Manage researchers and collaborators in your team.</p>
+                    </div>
+                    <button type="button" @click="openMemberModal()" class="px-3.5 py-2 bg-brand-700 hover:bg-brand-800 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-1.5 shadow-md shadow-brand-700/20">
+                        <i class="fa-solid fa-user-plus"></i>
+                        <span>Add Member</span>
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div x-show="workspaceLoading" class="py-10 text-center text-slate-500">
+                    <i class="fa-solid fa-spinner fa-spin text-2xl text-brand-600 mb-2"></i>
+                    <p class="text-sm">Loading team members...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div x-show="!workspaceLoading && teamMembers.length === 0" class="py-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <i class="fa-solid fa-users text-3xl text-slate-300 mb-2"></i>
+                    <p class="text-sm font-semibold text-slate-700">No team members yet</p>
+                    <p class="text-xs text-slate-500 mt-1">Click "Add Member" to add a collaborator.</p>
+                </div>
+
+                <!-- Team Members List -->
+                <div x-show="!workspaceLoading && teamMembers.length > 0" class="space-y-3">
+                    <template x-for="member in teamMembers" :key="member.id">
+                        <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between gap-3">
+                            <div class="flex items-center space-x-3 min-w-0">
+                                <div class="w-9 h-9 rounded-xl bg-brand-700 text-white font-bold text-xs flex items-center justify-center flex-shrink-0"
+                                    x-text="(member.name || 'M').slice(0, 2).toUpperCase()"></div>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-slate-900 truncate" x-text="member.name"></p>
+                                    <p class="text-xs text-slate-500 flex items-center gap-2">
+                                        <span x-text="member.role || 'Team Member'"></span>
+                                        <span class="text-slate-300">•</span>
+                                        <span x-text="formatDate(member.createdAt)"></span>
+                                    </p>
+                                </div>
+                            </div>
+                            <button type="button" @click="deleteMemberItem(member.id)" :aria-label="'Remove member ' + member.name"
+                                class="text-slate-400 hover:text-rose-600 p-2 rounded-lg transition flex-shrink-0">
+                                <i class="fa-solid fa-trash-can text-xs"></i>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </section>
+        </div>
         
         <!-- Dashboard Top Action Bar -->
         <div class="bg-white p-6 rounded-3xl shadow-xl border border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -318,7 +574,7 @@
                                             <span class="text-slate-500"><strong x-text="optData.count"></strong> (<span x-text="optData.percent + '%'"></span>)</span>
                                         </div>
                                         <div class="w-full bg-slate-200/80 h-2.5 rounded-full overflow-hidden">
-                                            <div class="h-2.5 rounded-full transition-all duration-500" :class="optData.barColor" :style="width: ${optData.percent}%"></div>
+                                            <div class="h-2.5 rounded-full transition-all duration-500" :class="optData.barColor" :style="'width: ' + optData.percent + '%'"></div>
                                         </div>
                                     </div>
                                 </template>
@@ -387,10 +643,12 @@
                 </div>
             </div>
         </div>
+        </div>
+        </template>
     </div>
 
     <!-- ==================== TAB 3: ABOUT STUDY ==================== -->
-    <div x-show="currentTab === 'about'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="max-w-3xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+    <div x-show="isAuthenticated && currentTab === 'about'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="max-w-3xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         <h2 class="text-2xl font-bold text-slate-900 mb-4">About This Study</h2>
         <p class="text-sm text-slate-500 mb-6">This survey is part of a research project conducted by BS Criminology students at the University of Lahore. The study aims to explore the relationship between drug abuse and criminal behaviour among youth in Lahore.</p>
 
@@ -417,13 +675,14 @@
         <p class="text-slate-700">Email: ayesha.khan@uos.edu.pk</p>
         <p class="text-slate-700">Phone: +92 300 1234567</p>
     </div>
+    </main>
 
     <!-- Response Detail Modal -->
-    <div x-show="showDetailModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50" x-transition>
-        <div class="bg-white p-6 rounded-3xl shadow-xl max-w-lg w-full">
+    <div x-show="showDetailModal && selectedResponse" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50" x-transition>
+        <div class="bg-white p-6 rounded-3xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-bold text-slate-900" x-text="'Response Details - ' + selectedResponse.id"></h3>
-                <button @click="showDetailModal = false" class="text-slate-400 hover:text-slate-600">
+                <h3 class="text-lg font-bold text-slate-900" x-text="'Response Details - ' + (selectedResponse?.id || '')"></h3>
+                <button type="button" @click="showDetailModal = false" aria-label="Close modal" class="text-slate-400 hover:text-slate-600">
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
@@ -432,19 +691,19 @@
                 <!-- Response Metadata -->
                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <p class="text-xs text-slate-500 font-medium mb-1">Response ID</p>
-                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.id"></p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse?.id || ''"></p>
                 </div>
                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <p class="text-xs text-slate-500 font-medium mb-1">Date / Time</p>
-                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.timestamp"></p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse?.timestamp || ''"></p>
                 </div>
                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <p class="text-xs text-slate-500 font-medium mb-1">Name</p>
-                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.name || 'Anonymous'"></p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse?.name || 'Anonymous'"></p>
                 </div>
                 <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                     <p class="text-xs text-slate-500 font-medium mb-1">City</p>
-                    <p class="text-slate-900 font-semibold" x-text="selectedResponse.city || 'Lahore'"></p>
+                    <p class="text-slate-900 font-semibold" x-text="selectedResponse?.city || 'Lahore'"></p>
                 </div>
             </div>
 
@@ -456,7 +715,7 @@
                         <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
                             <p class="text-xs text-slate-500 font-medium mb-1" x-text="'Q' + qNum"></p>
                             <p class="text-slate-900" x-text="getQuestionTitle(qNum)"></p>
-                            <p class="text-slate-700 font-semibold mt-1" x-text="selectedResponse['q' + qNum]"></p>
+                            <p class="text-slate-700 font-semibold mt-1" x-text="selectedResponse ? selectedResponse['q' + qNum] : ''"></p>
                         </div>
                     </template>
                 </div>
@@ -464,7 +723,7 @@
 
             <!-- Close Button -->
             <div class="mt-6">
-                <button @click="showDetailModal = false" class="w-full px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold transition">
+                <button type="button" @click="showDetailModal = false" class="w-full px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold transition">
                     <i class="fa-solid fa-xmark mr-2"></i>
                     Close
                 </button>
@@ -472,26 +731,84 @@
         </div>
     </div>
 
-    <!-- Researcher Password Modal -->
-    <div x-show="showPasswordModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50" x-transition>
-        <div class="bg-white p-6 rounded-3xl shadow-xl max-w-sm w-full">
-            <h3 class="text-lg font-bold text-slate-900 mb-4">Unlock Researcher Access</h3>
-            <p class="text-sm text-slate-500 mb-6">Enter the secret passcode to access the researcher dashboard.</p>
-
-            <div class="mb-4">
-                <input type="password" x-model="passwordInput" placeholder="Enter passcode"
-                    class="block w-full px-4 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-600 focus:border-transparent">
+    <!-- New Note Modal -->
+    <div x-show="showNoteModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50 p-4" x-transition>
+        <div role="dialog" aria-modal="true" aria-labelledby="new-note-modal-title" class="bg-white p-6 rounded-3xl shadow-xl max-w-md w-full space-y-5">
+            <div class="flex justify-between items-center">
+                <h3 id="new-note-modal-title" class="text-lg font-bold text-slate-900">New Note</h3>
+                <button type="button" @click="showNoteModal = false" aria-label="Close New Note modal" class="text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
             </div>
+            <form @submit.prevent="submitNote()" class="space-y-4" novalidate>
+                <div>
+                    <label for="note-title-input" class="block text-sm font-medium text-slate-700 mb-1">Title</label>
+                    <input id="note-title-input" type="text" x-model="noteForm.title" placeholder="e.g. Cohort Analysis Summary"
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                </div>
+                <div>
+                    <label for="note-content-input" class="block text-sm font-medium text-slate-700 mb-1">Content (optional)</label>
+                    <textarea id="note-content-input" rows="4" x-model="noteForm.content" placeholder="Write your research note..."
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600"></textarea>
+                </div>
+                <div x-show="noteModalError" role="alert" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    <span x-text="noteModalError"></span>
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" @click="showNoteModal = false" class="px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
+                    <button type="submit" :disabled="modalSaving" class="px-5 py-2.5 bg-brand-700 hover:bg-brand-800 disabled:opacity-60 text-white rounded-xl text-sm font-semibold transition flex items-center space-x-2">
+                        <i x-show="modalSaving" class="fa-solid fa-spinner fa-spin"></i>
+                        <span x-text="modalSaving ? 'Creating...' : 'Create'"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
-            <div class="flex justify-between gap-4">
-                <button @click="verifyPassword()" class="w-full px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-semibold transition">
-                    <i class="fa-solid fa-check mr-2"></i>
-                    Unlock
+    <!-- Add Member Modal -->
+    <div x-show="showMemberModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50 p-4" x-transition>
+        <div role="dialog" aria-modal="true" aria-labelledby="add-member-modal-title" class="bg-white p-6 rounded-3xl shadow-xl max-w-md w-full space-y-5">
+            <div class="flex justify-between items-center">
+                <h3 id="add-member-modal-title" class="text-lg font-bold text-slate-900">Add Member</h3>
+                <button type="button" @click="showMemberModal = false" aria-label="Close Add Member modal" class="text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
-                <button @click="showPasswordModal = false" class="w-full px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-semibold transition">
-                    <i class="fa-solid fa-xmark mr-2"></i>
-                    Cancel
-                </button>
+            </div>
+            <form @submit.prevent="submitMember()" class="space-y-4" novalidate>
+                <div>
+                    <label for="member-name-input" class="block text-sm font-medium text-slate-700 mb-1">Member Name</label>
+                    <input id="member-name-input" type="text" x-model="memberForm.name" placeholder="e.g. Dr. Ayesha Khan"
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                </div>
+                <div>
+                    <label for="member-role-input" class="block text-sm font-medium text-slate-700 mb-1">Role (optional)</label>
+                    <input id="member-role-input" type="text" x-model="memberForm.role" placeholder="e.g. Principal Investigator"
+                        class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-600">
+                </div>
+                <div x-show="memberModalError" role="alert" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    <span x-text="memberModalError"></span>
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" @click="showMemberModal = false" class="px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
+                    <button type="submit" :disabled="modalSaving" class="px-5 py-2.5 bg-brand-700 hover:bg-brand-800 disabled:opacity-60 text-white rounded-xl text-sm font-semibold transition flex items-center space-x-2">
+                        <i x-show="modalSaving" class="fa-solid fa-spinner fa-spin"></i>
+                        <span x-text="modalSaving ? 'Creating...' : 'Create'"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Clear Research Data Confirmation Modal -->
+    <div x-show="showClearConfirmModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50 p-4" x-transition>
+        <div role="dialog" aria-modal="true" aria-labelledby="clear-data-modal-title" class="bg-white p-6 rounded-3xl shadow-xl max-w-sm w-full space-y-4">
+            <h3 id="clear-data-modal-title" class="text-lg font-bold text-slate-900">Clear Research Responses?</h3>
+            <p class="text-sm text-slate-600">Are you sure you want to clear all locally recorded research responses? This action cannot be undone.</p>
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button" @click="showClearConfirmModal = false" class="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
+                <button type="button" @click="executeClearData()" class="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-sm font-semibold transition">Clear Data</button>
             </div>
         </div>
     </div>
@@ -508,86 +825,45 @@
         </div>
     </div>
 
-    <!-- Firebase Auth & Firestore Initialization (moved to bottom for faster page load) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Firebase Configuration (Global setup)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'criminology-research-lahore';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : {
-                apiKey: "AIzaSyDemoPlaceholderOnlyForLocalFallback",
-                authDomain: "criminology-research.firebaseapp.com",
-                projectId: "criminology-research",
-                storageBucket: "criminology-research.appspot.com",
-                messagingSenderId: "1234567890",
-                appId: "1:1234567890:web:abc123def456"
-            };
-
-        window.initFirebaseSystem = async function(appComponent) {
-            try {
-                const app = initializeApp(firebaseConfig);
-                const auth = getAuth(app);
-                const db = getFirestore(app);
-
-                // Authenticate before querying
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                // Public collection reference following strict path rules
-                const responsesCollection = collection(db, 'artifacts', appId, 'public', 'data', 'responses');
-
-                // Attach real-time cloud listener
-                onSnapshot(responsesCollection, (snapshot) => {
-                    const cloudData = [];
-                    snapshot.forEach(doc => {
-                        cloudData.push({ id: doc.id, ...doc.data() });
-                    });
-                    // Sort latest first
-                    cloudData.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-                    appComponent.syncCloudResponses(cloudData);
-                }, (error) => {
-                    console.warn("Firestore realtime sync notice (using local fallback if unconfigured):", error);
-                });
-
-                window.saveSubmissionToCloud = async function(submission) {
-                    try {
-                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'responses', submission.id);
-                        await setDoc(docRef, {
-                            ...submission,
-                            createdAt: Date.now()
-                        });
-                        return true;
-                    } catch (e) {
-                        console.error("Cloud save fallback trigger:", e);
-                        return false;
-                    }
-                };
-            } catch (err) {
-                console.warn("Firebase initialization notice:", err);
-            }
-        };
-    </script>
-
     <!-- Alpine.js Application Logic -->
     <script>
         function surveyApp() {
             return {
-                currentTab: 'survey',
+                currentTab: 'admin',
                 adminViewMode: 'analytics', // 'analytics' or 'table'
                 step: 1,
                 surveySubmitted: false,
                 showDetailModal: false,
-                showPasswordModal: false,
-                isResearcher: false,
-                passwordInput: '',
-                secretPasscode: 'lahore2026',
+                showClearConfirmModal: false,
+                authReady: false,
+                isAuthenticated: false,
+                authUser: null,
+                authUserUid: '',
+                authUserEmail: '',
+                userProfile: null,
+                isDashboardUnlocked: false,
+                dashboardPasscodeInput: '',
+                dashboardPasscodeError: '',
+                dashboardUnlockLoading: false,
+                authMode: 'signin', // 'signin' or 'signup'
+                authLoading: false,
+                authError: '',
+                authForm: {
+                    email: '',
+                    password: ''
+                },
+                workspaceLoading: false,
+                workspaceError: '',
+                workspaceUnsubscribe: null,
+                notes: [],
+                teamMembers: [],
+                showNoteModal: false,
+                showMemberModal: false,
+                modalSaving: false,
+                noteModalError: '',
+                memberModalError: '',
+                noteForm: { title: '', content: '' },
+                memberForm: { name: '', role: '' },
                 selectedResponse: null,
                 searchQuery: '',
                 notification: {
@@ -639,8 +915,8 @@
                 },
 
                 init() {
-                    if (sessionStorage.getItem('criminology_researcher_auth') === 'true') {
-                        this.isResearcher = true;
+                    if (sessionStorage.getItem('criminology_dashboard_unlocked') === 'true') {
+                        this.isDashboardUnlocked = true;
                     }
                     const saved = localStorage.getItem('criminology_survey_responses');
                     if (saved) {
@@ -650,43 +926,301 @@
                             this.allResponses = [];
                         }
                     }
-                    // Initialize central cloud db listener
-                    if (window.initFirebaseSystem) {
-                        window.initFirebaseSystem(this);
-                    }
-                },
 
-                syncCloudResponses(cloudData) {
-                    if (Array.isArray(cloudData) && cloudData.length > 0) {
-                        this.allResponses = cloudData;
-                        localStorage.setItem('criminology_survey_responses', JSON.stringify(cloudData));
-                    }
-                },
+                    const bindAuthListener = () => {
+                        const authService = window.firebaseAuthService;
+                        if (!authService) return;
+                        authService.subscribeAuthState((user) => {
+                            this.authReady = true;
+                            if (user) {
+                                this.isAuthenticated = true;
+                                this.authUser = user;
+                                this.authUserUid = user.uid;
+                                this.authUserEmail = user.email || '';
+                                this.currentTab = 'admin';
+                                this.authError = '';
+                                if (this.isDashboardUnlocked) {
+                                    this.startWorkspaceSync(user);
+                                }
+                            } else {
+                                this.stopWorkspaceSync();
+                                this.isAuthenticated = false;
+                                this.authUser = null;
+                                this.authUserUid = '';
+                                this.authUserEmail = '';
+                                this.userProfile = null;
+                                this.isDashboardUnlocked = false;
+                                sessionStorage.removeItem('criminology_dashboard_unlocked');
+                            }
+                        });
+                    };
 
-                openPasswordModal() {
-                    this.passwordInput = '';
-                    this.showPasswordModal = true;
-                },
-
-                verifyPassword() {
-                    const entered = (this.passwordInput || '').trim();
-                    if (entered === this.secretPasscode) {
-                        this.isResearcher = true;
-                        sessionStorage.setItem('criminology_researcher_auth', 'true');
-                        this.showPasswordModal = false;
-                        this.passwordInput = '';
-                        this.currentTab = 'admin';
-                        this.showNotify('Researcher session unlocked successfully!');
+                    if (window.firebaseAuthService) {
+                        bindAuthListener();
                     } else {
-                        this.showNotify('Incorrect passcode. Access denied.', 'error');
+                        window.addEventListener('firebase-auth-ready', bindAuthListener, { once: true });
                     }
                 },
 
-                lockResearcherAccess() {
-                    this.isResearcher = false;
-                    sessionStorage.removeItem('criminology_researcher_auth');
-                    this.currentTab = 'survey';
-                    this.showNotify('Researcher session locked.');
+                async startWorkspaceSync(user) {
+                    const fsService = window.firestoreService;
+                    if (!fsService || !user?.uid) return;
+
+                    this.stopWorkspaceSync();
+                    this.workspaceLoading = true;
+                    this.workspaceError = '';
+
+                    let notesLoaded = false;
+                    let membersLoaded = false;
+                    const checkLoaded = () => {
+                        if (notesLoaded && membersLoaded) {
+                            this.workspaceLoading = false;
+                        }
+                    };
+
+                    try {
+                        this.userProfile = await fsService.ensureUserProfile(user);
+                    } catch (err) {
+                        this.workspaceError = 'Unable to load your workspace profile from Firestore. Ensure Firestore is enabled and security rules allow access.';
+                        this.workspaceLoading = false;
+                    }
+
+                    this.workspaceUnsubscribe = fsService.subscribeUserWorkspace(user.uid, {
+                        onNotes: (items) => {
+                            this.notes = items;
+                            notesLoaded = true;
+                            checkLoaded();
+                        },
+                        onMembers: (items) => {
+                            this.teamMembers = items;
+                            membersLoaded = true;
+                            checkLoaded();
+                        },
+                        onError: () => {
+                            this.workspaceLoading = false;
+                            this.workspaceError = 'Unable to sync Firestore workspace data. Check Firestore setup and security rules.';
+                        }
+                    });
+                },
+
+                stopWorkspaceSync() {
+                    if (window.firestoreService && typeof window.firestoreService.stopWorkspaceSync === 'function') {
+                        window.firestoreService.stopWorkspaceSync();
+                    }
+                    if (typeof this.workspaceUnsubscribe === 'function') {
+                        this.workspaceUnsubscribe();
+                        this.workspaceUnsubscribe = null;
+                    }
+                    this.notes = [];
+                    this.teamMembers = [];
+                    this.workspaceLoading = false;
+                    this.workspaceError = '';
+                },
+
+                formatDate(ts) {
+                    return window.workspaceHelpers
+                        ? window.workspaceHelpers.formatFirestoreDate(ts)
+                        : 'Just now';
+                },
+
+                openNoteModal() {
+                    this.noteForm = { title: '', content: '' };
+                    this.noteModalError = '';
+                    this.showNoteModal = true;
+                },
+
+                async submitNote() {
+                    const helpers = window.workspaceHelpers;
+                    const fsService = window.firestoreService;
+                    if (!helpers || !fsService || !this.authUserUid) return;
+
+                    this.noteModalError = '';
+                    const validation = helpers.validateNoteInput(this.noteForm);
+                    if (!validation.valid) {
+                        this.noteModalError = validation.error;
+                        return;
+                    }
+
+                    this.modalSaving = true;
+                    try {
+                        const created = await fsService.createNote(this.authUserUid, validation.data);
+                        if (!this.notes.some((n) => n.id === created.id)) {
+                            this.notes = [created, ...this.notes];
+                        }
+                        this.showNoteModal = false;
+                        this.showNotify('Note saved successfully!');
+                    } catch (err) {
+                        this.noteModalError = 'Failed to save note to Firestore.';
+                    } finally {
+                        this.modalSaving = false;
+                    }
+                },
+
+                async deleteNoteItem(noteId) {
+                    const fsService = window.firestoreService;
+                    if (!fsService || !this.authUserUid) return;
+                    try {
+                        await fsService.deleteNote(this.authUserUid, noteId);
+                        this.notes = this.notes.filter((n) => n.id !== noteId);
+                        this.showNotify('Note deleted.');
+                    } catch (err) {
+                        this.showNotify('Unable to delete note.', 'error');
+                    }
+                },
+
+                openMemberModal() {
+                    this.memberForm = { name: '', role: '' };
+                    this.memberModalError = '';
+                    this.showMemberModal = true;
+                },
+
+                async submitMember() {
+                    const helpers = window.workspaceHelpers;
+                    const fsService = window.firestoreService;
+                    if (!helpers || !fsService || !this.authUserUid) return;
+
+                    this.memberModalError = '';
+                    const validation = helpers.validateMemberInput(this.memberForm);
+                    if (!validation.valid) {
+                        this.memberModalError = validation.error;
+                        return;
+                    }
+
+                    this.modalSaving = true;
+                    try {
+                        const created = await fsService.createMember(this.authUserUid, validation.data);
+                        if (!this.teamMembers.some((m) => m.id === created.id)) {
+                            this.teamMembers = [created, ...this.teamMembers];
+                        }
+                        this.showMemberModal = false;
+                        this.showNotify('Team member added successfully!');
+                    } catch (err) {
+                        this.memberModalError = 'Failed to save team member to Firestore.';
+                    } finally {
+                        this.modalSaving = false;
+                    }
+                },
+
+                async deleteMemberItem(memberId) {
+                    const fsService = window.firestoreService;
+                    if (!fsService || !this.authUserUid) return;
+                    try {
+                        await fsService.deleteMember(this.authUserUid, memberId);
+                        this.teamMembers = this.teamMembers.filter((m) => m.id !== memberId);
+                        this.showNotify('Team member removed.');
+                    } catch (err) {
+                        this.showNotify('Unable to remove team member.', 'error');
+                    }
+                },
+
+                switchAuthMode(mode) {
+                    this.authMode = mode;
+                    this.authError = '';
+                },
+
+                async submitAuth() {
+                    const authService = window.firebaseAuthService;
+                    if (!authService) {
+                        this.authError = 'Authentication service is still initializing. Please try again.';
+                        return;
+                    }
+
+                    this.authError = '';
+                    const validation = authService.validateAuthInput(
+                        this.authForm.email,
+                        this.authForm.password,
+                        this.authMode
+                    );
+
+                    if (!validation.valid) {
+                        this.authError = validation.error;
+                        return;
+                    }
+
+                    this.authLoading = true;
+                    try {
+                        if (this.authMode === 'signin') {
+                            await authService.signIn(this.authForm.email, this.authForm.password);
+                            this.showNotify('Signed in successfully!');
+                        } else {
+                            await authService.signUp(this.authForm.email, this.authForm.password);
+                            this.showNotify('Account created successfully!');
+                        }
+                        this.authForm.password = '';
+                        this.currentTab = 'admin';
+                    } catch (err) {
+                        this.authError = authService.mapFirebaseAuthError(err && err.code, this.authMode);
+                    } finally {
+                        this.authLoading = false;
+                    }
+                },
+
+                async unlockDashboard() {
+                    const entered = (this.dashboardPasscodeInput || '').trim();
+                    this.dashboardPasscodeError = '';
+                    if (!entered) {
+                        this.dashboardPasscodeError = 'Please enter the dashboard passcode.';
+                        return;
+                    }
+
+                    this.dashboardUnlockLoading = true;
+                    try {
+                        const res = await fetch('/api/verify-dashboard-password', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: entered })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.ok) {
+                            this.isDashboardUnlocked = true;
+                            sessionStorage.setItem('criminology_dashboard_unlocked', 'true');
+                            this.dashboardPasscodeInput = '';
+                            this.dashboardPasscodeError = '';
+                            if (this.authUser) {
+                                this.startWorkspaceSync(this.authUser);
+                            }
+                            this.showNotify('Dashboard unlocked successfully!');
+                        } else {
+                            this.dashboardPasscodeError = data?.error || 'Incorrect passcode. Access denied.';
+                        }
+                    } catch (err) {
+                        this.dashboardPasscodeError = 'Unable to verify passcode. Please try again.';
+                    } finally {
+                        this.dashboardUnlockLoading = false;
+                    }
+                },
+
+                lockDashboard() {
+                    this.stopWorkspaceSync();
+                    this.isDashboardUnlocked = false;
+                    this.dashboardPasscodeInput = '';
+                    this.dashboardPasscodeError = '';
+                    sessionStorage.removeItem('criminology_dashboard_unlocked');
+                    this.showNotify('Dashboard locked.');
+                },
+
+                async logout() {
+                    const authService = window.firebaseAuthService;
+                    if (!authService) return;
+                    try {
+                        this.stopWorkspaceSync();
+                        this.isDashboardUnlocked = false;
+                        this.dashboardPasscodeInput = '';
+                        this.dashboardPasscodeError = '';
+                        sessionStorage.removeItem('criminology_dashboard_unlocked');
+                        await authService.signOut();
+                        this.isAuthenticated = false;
+                        this.authUser = null;
+                        this.authUserUid = '';
+                        this.authUserEmail = '';
+                        this.userProfile = null;
+                        this.authForm.password = '';
+                        this.authError = '';
+                        this.authMode = 'signin';
+                        this.showNotify('Signed out successfully.');
+                    } catch (err) {
+                        this.showNotify('Unable to sign out. Please try again.', 'error');
+                    }
                 },
 
                 showNotify(message, type = 'success') {
@@ -716,7 +1250,7 @@
                     }
                 },
 
-                async submitSurvey() {
+                submitSurvey() {
                     const newSubmission = {
                         id: 'RESP-' + Date.now().toString().slice(-6),
                         timestamp: new Date().toLocaleString(),
@@ -727,14 +1261,9 @@
                     this.allResponses.unshift(newSubmission);
                     localStorage.setItem('criminology_survey_responses', JSON.stringify(this.allResponses));
 
-                    // Save to Central Cloud Database
-                    if (window.saveSubmissionToCloud) {
-                        await window.saveSubmissionToCloud(newSubmission);
-                    }
-
                     this.surveySubmitted = true;
                     this.currentTab = 'survey';
-                    this.showNotify('Survey submitted successfully and saved to central database!');
+                    this.showNotify('Survey submitted successfully!');
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 },
 
@@ -916,33 +1445,34 @@
 
                     let csvContent = headers.join(',') + '\n';
 
+                    const escapeCsv = (val) => '"' + String(val ?? '').replace(/"/g, '""') + '"';
+
                     this.allResponses.forEach(r => {
                         const row = [
-                            r.id,
-                            "${r.timestamp}",
-                            "${r.name || 'Anonymous'}",
-                            "${r.city || 'Lahore'}",
-                            "${r.q1 || ''}",
-                            "${r.q2 || ''}",
-                            "${r.q3 || ''}",
-                            "${r.q4 || ''}",
-                            "${r.q5 || ''}",
-                            "${r.q6 || ''}",
-                            "${r.q7 || ''}",
-                            "${r.q8 || ''}",
-                            "${r.q9 || ''}",
-                            "${r.q10 || ''}",
-                            "${r.q11 || ''}",
-                            "${r.q11 || ''}",
-                            "${r.q12 || ''}",
-                            "${r.q13 || ''}",
-                            "${r.q14 || ''}",
-                            "${r.q15 || ''}",
-                            "${r.q16 || ''}",
-                            "${r.q17 || ''}",
-                            "${r.q18 || ''}",
-                            "${r.q19 || ''}",
-                            "${r.q20 || ''}",
+                            escapeCsv(r.id),
+                            escapeCsv(r.timestamp),
+                            escapeCsv(r.name || 'Anonymous'),
+                            escapeCsv(r.city || 'Lahore'),
+                            escapeCsv(r.q1 || ''),
+                            escapeCsv(r.q2 || ''),
+                            escapeCsv(r.q3 || ''),
+                            escapeCsv(r.q4 || ''),
+                            escapeCsv(r.q5 || ''),
+                            escapeCsv(r.q6 || ''),
+                            escapeCsv(r.q7 || ''),
+                            escapeCsv(r.q8 || ''),
+                            escapeCsv(r.q9 || ''),
+                            escapeCsv(r.q10 || ''),
+                            escapeCsv(r.q11 || ''),
+                            escapeCsv(r.q12 || ''),
+                            escapeCsv(r.q13 || ''),
+                            escapeCsv(r.q14 || ''),
+                            escapeCsv(r.q15 || ''),
+                            escapeCsv(r.q16 || ''),
+                            escapeCsv(r.q17 || ''),
+                            escapeCsv(r.q18 || ''),
+                            escapeCsv(r.q19 || ''),
+                            escapeCsv(r.q20 || '')
                         ];
                         csvContent += row.join(',') + '\n';
                     });
@@ -975,11 +1505,14 @@
                 },
 
                 confirmClearData() {
-                    if (confirm('Are you sure you want to clear all recorded research responses? This action cannot be undone.')) {
-                        this.allResponses = [];
-                        localStorage.removeItem('criminology_survey_responses');
-                        this.showNotify('All research data reset successfully.');
-                    }
+                    this.showClearConfirmModal = true;
+                },
+
+                executeClearData() {
+                    this.allResponses = [];
+                    localStorage.removeItem('criminology_survey_responses');
+                    this.showClearConfirmModal = false;
+                    this.showNotify('All research data reset successfully.');
                 }
             }
         }
