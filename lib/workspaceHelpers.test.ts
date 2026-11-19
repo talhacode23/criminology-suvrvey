@@ -6,6 +6,7 @@ import {
   validateNoteInput,
   validateMemberInput,
   buildUserProfilePayload,
+  buildSurveyResponsePayload,
   resolveFolderName,
   formatFirestoreDate,
 } from './workspaceHelpers.js';
@@ -104,3 +105,19 @@ test('formatFirestoreDate handles null, Timestamp-like objects, and seconds', ()
   assert.notEqual(formatFirestoreDate({ seconds: 1700000000 }), 'Just now');
   assert.notEqual(formatFirestoreDate({ toDate: () => new Date('2026-01-15T00:00:00Z') }), 'Just now');
 });
+
+test('buildSurveyResponsePayload sanitizes inputs and guarantees all q1-q20 keys', () => {
+  const payload = buildSurveyResponsePayload(
+    { name: '  Sara  ', city: '', consent: true, q1: '21-23 years', q5: 'Agree' },
+    'RESP-999999'
+  );
+  assert.equal(payload.id, 'RESP-999999');
+  assert.equal(payload.name, 'Sara');
+  assert.equal(payload.city, 'Lahore');
+  assert.equal(payload.consent, true);
+  assert.equal(payload.q1, '21-23 years');
+  assert.equal(payload.q5, 'Agree');
+  assert.equal(payload.q20, '');
+  assert.equal(typeof payload.timestamp, 'string');
+});
+

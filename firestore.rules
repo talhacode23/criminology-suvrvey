@@ -73,6 +73,36 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidAnswer(val) {
+      return val is string && val.size() <= 80;
+    }
+
+    function isValidSurveyResponse(data) {
+      return data.keys().hasAll([
+          'id', 'timestamp', 'name', 'city', 'consent',
+          'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9', 'q10',
+          'q11', 'q12', 'q13', 'q14', 'q15', 'q16', 'q17', 'q18', 'q19', 'q20',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'timestamp', 'name', 'city', 'consent',
+          'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9', 'q10',
+          'q11', 'q12', 'q13', 'q14', 'q15', 'q16', 'q17', 'q18', 'q19', 'q20',
+          'createdAt'
+        ])
+        && data.id is string && data.id.size() >= 1 && data.id.size() <= 64
+        && data.timestamp is string && data.timestamp.size() >= 1 && data.timestamp.size() <= 100
+        && data.name is string && data.name.size() <= 120
+        && data.city is string && data.city.size() <= 120
+        && data.consent == true
+        && isValidAnswer(data.q1) && isValidAnswer(data.q2) && isValidAnswer(data.q3) && isValidAnswer(data.q4)
+        && isValidAnswer(data.q5) && isValidAnswer(data.q6) && isValidAnswer(data.q7) && isValidAnswer(data.q8)
+        && isValidAnswer(data.q9) && isValidAnswer(data.q10) && isValidAnswer(data.q11) && isValidAnswer(data.q12)
+        && isValidAnswer(data.q13) && isValidAnswer(data.q14) && isValidAnswer(data.q15) && isValidAnswer(data.q16)
+        && isValidAnswer(data.q17) && isValidAnswer(data.q18) && isValidAnswer(data.q19) && isValidAnswer(data.q20)
+        && data.createdAt is timestamp;
+    }
+
     match /users/{uid} {
       allow get: if isOwner(uid) && isValidId(uid);
       allow list: if false;
@@ -147,6 +177,16 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(uid) && isValidId(memberId);
       }
+    }
+
+    match /surveyResponses/{responseId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(responseId)
+        && isValidSurveyResponse(incoming())
+        && incoming().id == responseId
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(responseId);
     }
   }
 }

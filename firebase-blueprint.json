@@ -126,6 +126,49 @@
         }
       },
       "required": ["name", "createdAt"]
+    },
+    "SurveyResponse": {
+      "title": "SurveyResponse",
+      "description": "Shared research survey submission readable by authenticated dashboard researchers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "timestamp": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 120 },
+        "city": { "type": "string", "maxLength": 120 },
+        "consent": { "type": "boolean" },
+        "q1": { "type": "string", "maxLength": 80 },
+        "q2": { "type": "string", "maxLength": 80 },
+        "q3": { "type": "string", "maxLength": 80 },
+        "q4": { "type": "string", "maxLength": 80 },
+        "q5": { "type": "string", "maxLength": 80 },
+        "q6": { "type": "string", "maxLength": 80 },
+        "q7": { "type": "string", "maxLength": 80 },
+        "q8": { "type": "string", "maxLength": 80 },
+        "q9": { "type": "string", "maxLength": 80 },
+        "q10": { "type": "string", "maxLength": 80 },
+        "q11": { "type": "string", "maxLength": 80 },
+        "q12": { "type": "string", "maxLength": 80 },
+        "q13": { "type": "string", "maxLength": 80 },
+        "q14": { "type": "string", "maxLength": 80 },
+        "q15": { "type": "string", "maxLength": 80 },
+        "q16": { "type": "string", "maxLength": 80 },
+        "q17": { "type": "string", "maxLength": 80 },
+        "q18": { "type": "string", "maxLength": 80 },
+        "q19": { "type": "string", "maxLength": 80 },
+        "q20": { "type": "string", "maxLength": 80 },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the survey response was submitted."
+        }
+      },
+      "required": [
+        "id", "timestamp", "name", "city", "consent",
+        "q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "q9", "q10",
+        "q11", "q12", "q13", "q14", "q15", "q16", "q17", "q18", "q19", "q20",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -148,6 +191,10 @@
     "/users/{uid}/teamMembers/{memberId}": {
       "schema": { "$ref": "#/entities/TeamMember" },
       "description": "Team members belonging exclusively to the authenticated user."
+    },
+    "/surveyResponses/{responseId}": {
+      "schema": { "$ref": "#/entities/SurveyResponse" },
+      "description": "Shared research survey responses synced across researchers."
     }
   }
 }

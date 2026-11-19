@@ -35,6 +35,7 @@
         import {
             validateNoteInput,
             validateMemberInput,
+            buildSurveyResponsePayload,
             formatFirestoreDate
         } from "./lib/workspaceHelpers.js";
 
@@ -83,6 +84,7 @@
             window.workspaceHelpers = {
                 validateNoteInput,
                 validateMemberInput,
+                buildSurveyResponsePayload,
                 formatFirestoreDate
             };
 
@@ -122,8 +124,8 @@
                 <p class="text-xs text-indigo-200">Drug Abuse &amp; Criminal Behaviour</p>
             </div>
             <div class="w-full sm:w-auto flex items-center">
-                <!-- Tabs & Logout visible when authenticated -->
-                <div x-show="isAuthenticated" class="w-full sm:w-auto flex flex-wrap items-center justify-between sm:justify-start bg-brand-800/80 p-1.5 rounded-xl border border-indigo-700/50 shadow-inner gap-1">
+                <!-- Navigation Tabs -->
+                <div class="w-full sm:w-auto flex flex-wrap items-center justify-between sm:justify-start bg-brand-800/80 p-1.5 rounded-xl border border-indigo-700/50 shadow-inner gap-1">
                     <button type="button" @click="currentTab = 'survey'" 
                         :class="currentTab === 'survey' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
                         class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
@@ -133,9 +135,9 @@
                     <button type="button" @click="currentTab = 'admin'" 
                         :class="currentTab === 'admin' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
                         class="px-3 py-1.5 rounded-lg text-xs md:text-sm transition flex items-center space-x-1.5">
-                        <i class="fa-solid" :class="isDashboardUnlocked ? 'fa-chart-pie' : 'fa-lock'"></i>
-                        <span x-show="isDashboardUnlocked">Dashboard (<span x-text="allResponses.length"></span>)</span>
-                        <span x-show="!isDashboardUnlocked">Dashboard</span>
+                        <i class="fa-solid" :class="isAuthenticated && isDashboardUnlocked ? 'fa-chart-pie' : 'fa-lock'"></i>
+                        <span x-show="isAuthenticated && isDashboardUnlocked">Dashboard (<span x-text="allResponses.length"></span>)</span>
+                        <span x-show="!isAuthenticated || !isDashboardUnlocked">Dashboard</span>
                     </button>
                     <button type="button" @click="currentTab = 'about'" 
                         :class="currentTab === 'about' ? 'bg-white text-brand-900 shadow-md font-semibold' : 'text-indigo-200 hover:text-white'"
@@ -143,7 +145,7 @@
                         <i class="fa-solid fa-circle-info"></i>
                         <span>About</span>
                     </button>
-                    <button type="button" @click="logout()" aria-label="Logout" title="Logout" class="px-3 py-1.5 rounded-lg text-xs md:text-sm text-rose-200 hover:text-white hover:bg-rose-600/30 transition flex items-center space-x-1.5 ml-1">
+                    <button type="button" x-show="isAuthenticated" @click="logout()" aria-label="Logout" title="Logout" class="px-3 py-1.5 rounded-lg text-xs md:text-sm text-rose-200 hover:text-white hover:bg-rose-600/30 transition flex items-center space-x-1.5 ml-1">
                         <i class="fa-solid fa-right-from-bracket"></i>
                         <span>Logout</span>
                     </button>
@@ -154,7 +156,7 @@
 
     <main class="max-w-7xl mx-auto px-4 py-8">
         <!-- ==================== AUTH SCREEN ==================== -->
-        <div x-show="!isAuthenticated" x-transition class="max-w-md mx-auto py-8">
+        <div x-show="!isAuthenticated && currentTab === 'admin'" x-transition class="max-w-md mx-auto py-8">
             <div x-show="!authReady" class="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 text-center">
                 <i class="fa-solid fa-spinner fa-spin text-2xl text-brand-600 mb-3"></i>
                 <p class="text-sm text-slate-600">Checking authentication status...</p>
@@ -206,11 +208,18 @@
                         <span x-text="authLoading ? (authMode === 'signin' ? 'Signing in...' : 'Signing up...') : (authMode === 'signin' ? 'Sign In' : 'Sign Up')"></span>
                     </button>
                 </form>
+
+                <div class="pt-4 border-t border-slate-200 text-center space-y-2">
+                    <p class="text-xs text-slate-500">Filling out the questionnaire as a participant?</p>
+                    <button type="button" @click="currentTab = 'survey'" class="w-full py-2.5 px-4 bg-indigo-50 hover:bg-indigo-100 text-brand-700 rounded-xl font-semibold text-xs transition border border-indigo-100">
+                        Open Research Survey
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- ==================== TAB 1: SURVEY ==================== -->
-        <div x-show="isAuthenticated && currentTab === 'survey'" x-transition class="space-y-6">
+        <div x-show="currentTab === 'survey'" x-transition class="space-y-6">
             <div class="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100">
                 <template x-if="!surveySubmitted">
                     <div>
@@ -491,11 +500,14 @@
                     <i class="fa-solid fa-database text-brand-600"></i>
                     <span>Central Research Database & Analytics</span>
                 </h2>
-                <p class="text-xs text-slate-500 mt-1 flex items-center space-x-2">
+                <p class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span>Total Submissions: <strong class="text-slate-800" x-text="allResponses.length"></strong></span>
                     <span class="text-slate-300">•</span>
-                    <span class="text-emerald-600 font-medium flex items-center"><i class="fa-solid fa-cloud text-xs mr-1"></i> Live Central Cloud Sync Active</span>
+                    <span x-show="responsesCloudSynced" class="text-emerald-600 font-medium flex items-center"><i class="fa-solid fa-cloud text-xs mr-1"></i> Live Cloud Sync Active (Shared Across Devices)</span>
+                    <span x-show="!responsesCloudSynced && !responsesSyncError" class="text-slate-500 font-medium flex items-center"><i class="fa-solid fa-spinner fa-spin text-xs mr-1"></i> Syncing cloud submissions...</span>
+                    <span x-show="responsesSyncError" class="text-amber-600 font-medium flex items-center"><i class="fa-solid fa-triangle-exclamation text-xs mr-1"></i> Local Cache Mode</span>
                 </p>
+                <p x-show="responsesSyncError" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mt-2" x-text="responsesSyncError"></p>
             </div>
 
             <!-- View Toggle & Export Actions -->
@@ -659,7 +671,7 @@
     </div>
 
     <!-- ==================== TAB 3: ABOUT STUDY ==================== -->
-    <div x-show="isAuthenticated && currentTab === 'about'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="max-w-3xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+    <div x-show="currentTab === 'about'" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0" class="max-w-3xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         <h2 class="text-2xl font-bold text-slate-900 mb-4">About This Study</h2>
         <p class="text-sm text-slate-500 mb-6">This survey is part of a research project conducted by BS Criminology students at the University of Lahore. The study aims to explore the relationship between drug abuse and criminal behaviour among youth in Lahore.</p>
 
@@ -866,6 +878,9 @@
                 workspaceLoading: false,
                 workspaceError: '',
                 workspaceUnsubscribe: null,
+                responsesUnsubscribe: null,
+                responsesCloudSynced: false,
+                responsesSyncError: '',
                 notes: [],
                 teamMembers: [],
                 showNoteModal: false,
@@ -1031,6 +1046,20 @@
                             this.workspaceError = 'Unable to sync Firestore workspace data. Check Firestore setup and security rules.';
                         }
                     });
+
+                    this.responsesSyncError = '';
+                    this.responsesUnsubscribe = fsService.subscribeSurveyResponses({
+                        onResponses: (items) => {
+                            this.allResponses = items;
+                            this.responsesCloudSynced = true;
+                            this.responsesSyncError = '';
+                            localStorage.setItem('criminology_survey_responses', JSON.stringify(items));
+                        },
+                        onError: () => {
+                            this.responsesCloudSynced = false;
+                            this.responsesSyncError = 'Shared cloud responses need the updated firestore.rules (allowing surveyResponses) published in Firebase Console. Showing local device responses for now.';
+                        }
+                    });
                 },
 
                 stopWorkspaceSync() {
@@ -1041,6 +1070,12 @@
                         this.workspaceUnsubscribe();
                         this.workspaceUnsubscribe = null;
                     }
+                    if (typeof this.responsesUnsubscribe === 'function') {
+                        this.responsesUnsubscribe();
+                        this.responsesUnsubscribe = null;
+                    }
+                    this.responsesCloudSynced = false;
+                    this.responsesSyncError = '';
                     this.notes = [];
                     this.teamMembers = [];
                     this.workspaceLoading = false;
@@ -1304,20 +1339,38 @@
                     }
                 },
 
-                submitSurvey() {
-                    const newSubmission = {
-                        id: 'RESP-' + Date.now().toString().slice(-6),
-                        timestamp: new Date().toLocaleString(),
-                        ...this.formData
-                    };
+                async submitSurvey() {
+                    const helpers = window.workspaceHelpers;
+                    const fsService = window.firestoreService;
+                    const newSubmission = helpers
+                        ? helpers.buildSurveyResponsePayload(this.formData)
+                        : {
+                            id: 'RESP-' + Date.now().toString().slice(-6),
+                            timestamp: new Date().toLocaleString(),
+                            ...this.formData
+                        };
 
-                    // Local state update
+                    // Immediate local state update
                     this.allResponses.unshift(newSubmission);
                     localStorage.setItem('criminology_survey_responses', JSON.stringify(this.allResponses));
 
+                    let cloudSaved = false;
+                    if (fsService && typeof fsService.submitSurveyResponse === 'function') {
+                        try {
+                            await fsService.submitSurveyResponse(newSubmission);
+                            cloudSaved = true;
+                        } catch (err) {
+                            cloudSaved = false;
+                        }
+                    }
+
                     this.surveySubmitted = true;
                     this.currentTab = 'survey';
-                    this.showNotify('Survey submitted successfully!');
+                    this.showNotify(
+                        cloudSaved
+                            ? 'Survey submitted and saved to cloud database!'
+                            : 'Survey saved locally. Publish firestore.rules for shared cloud sync.'
+                    );
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 },
 
@@ -1454,20 +1507,21 @@
                     );
                 },
 
-                loadSampleData() {
+                async loadSampleData() {
+                    const helpers = window.workspaceHelpers;
+                    const fsService = window.firestoreService;
                     const sampleNames = ['Ali Raza', 'Usman Khan', 'Fatima Zahra', 'Hamza Tariq', 'Zainab Bibi'];
                     const sampleCities = ['Lahore', 'Lahore', 'Lahore (Model Town)', 'Lahore (Gulberg)', 'Lahore'];
                     const sampleAges = ['18-20 years', '21-23 years', '24-26 years', '27-29 years'];
                     const sampleGenders = ['Male', 'Female'];
-                    const sampleEdu = ['Matric', 'Intermediate', 'Bachelor\'s', 'Master\'s or above'];
+                    const sampleEdu = ['Matric', 'Intermediate', "Bachelor's", "Master's or above"];
                     const sampleStatus = ['Student', 'Employed', 'Unemployed'];
                     const likert = ['Strongly Agree', 'Agree', 'Neutral', 'Disagree', 'Strongly Disagree'];
 
+                    const stamp = Date.now().toString().slice(-5);
                     const sampleList = [];
                     for (let i = 1; i <= 5; i++) {
-                        const item = {
-                            id: 'SAMPLE-' + (1000 + i),
-                            timestamp: new Date(Date.now() - i * 3600000 * 4).toLocaleString(),
+                        const raw = {
                             name: sampleNames[i - 1],
                             city: sampleCities[i - 1],
                             consent: true,
@@ -1477,14 +1531,27 @@
                             q4: sampleStatus[Math.floor(Math.random() * sampleStatus.length)],
                         };
                         for (let qNum = 5; qNum <= 20; qNum++) {
-                            item['q' + qNum] = likert[Math.floor(Math.random() * likert.length)];
+                            raw['q' + qNum] = likert[Math.floor(Math.random() * likert.length)];
                         }
+                        const item = helpers
+                            ? helpers.buildSurveyResponsePayload(raw, `SAMPLE-${stamp}-${i}`)
+                            : { id: `SAMPLE-${stamp}-${i}`, timestamp: new Date().toLocaleString(), ...raw };
                         sampleList.push(item);
+                    }
+
+                    if (fsService && typeof fsService.submitSurveyBatch === 'function') {
+                        try {
+                            await fsService.submitSurveyBatch(sampleList);
+                            this.showNotify('Loaded 5 sample responses to cloud database!');
+                            return;
+                        } catch {
+                            // fall through to local update
+                        }
                     }
 
                     this.allResponses = [...sampleList, ...this.allResponses];
                     localStorage.setItem('criminology_survey_responses', JSON.stringify(this.allResponses));
-                    this.showNotify('Loaded 5 sample research responses successfully!');
+                    this.showNotify('Loaded 5 sample research responses locally!');
                 },
 
                 exportCSV() {
@@ -1562,7 +1629,15 @@
                     this.showClearConfirmModal = true;
                 },
 
-                executeClearData() {
+                async executeClearData() {
+                    const fsService = window.firestoreService;
+                    if (fsService && typeof fsService.clearAllSurveyResponses === 'function') {
+                        try {
+                            await fsService.clearAllSurveyResponses();
+                        } catch {
+                            // still clear local state cleanly
+                        }
+                    }
                     this.allResponses = [];
                     localStorage.removeItem('criminology_survey_responses');
                     this.showClearConfirmModal = false;
